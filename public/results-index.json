@@ -1,0 +1,10 @@
+[
+  {
+    "id": "cota-race-sample",
+    "title": "TZCC x TBR · COTA 正赛 2026-04-09",
+    "track": "cota",
+    "sessionType": "正赛",
+    "date": "2026-04-09",
+    "csvPath": "/results/tzcc-tbr-cota-r-2026-04-09.json"
+  }
+]
