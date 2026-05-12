@@ -1,0 +1,104 @@
+export interface DriverRow {
+    id: number;
+    name: string;
+    steam_id: string;
+    points: number;
+    license_points: number;
+    total_races: number;
+    podium_count: number;
+    ptw_count: number;
+    top10_count: number;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface RaceRow {
+    id: number;
+    race_name: string;
+    track_name: string;
+    server_name: string;
+    race_date: string;
+    source_file_name: string;
+    session_type: string;
+    created_at: string;
+}
+
+export interface RaceResultRow {
+    id: number;
+    race_id: number;
+    driver_id: number;
+    position: number;
+    points: number;
+    laps: number;
+    total_time: number;
+    best_lap: number;
+    is_podium: number;
+    is_top10: number;
+    is_ptw: number;
+    raw_data: string;
+    created_at: string;
+}
+
+export interface LicensePointLogRow {
+    id: number;
+    driver_id: number;
+    change_value: number;
+    before_points: number;
+    after_points: number;
+    reason: string;
+    operator: string;
+    created_at: string;
+}
+
+export interface DriverStanding {
+    id: number;
+    name: string;
+    steam_id: string;
+    points: number;
+    license_points: number;
+    total_races: number;
+    podium_count: number;
+    ptw_count: number;
+    top10_count: number;
+}
+
+export interface DriverRaceHistory {
+    race_id: number;
+    race_name: string;
+    track_name: string;
+    race_date: string;
+    position: number;
+    points: number;
+    laps: number;
+    total_time: number;
+    best_lap: number;
+    is_podium: number;
+    is_top10: number;
+    is_ptw: number;
+}
+
+export interface LicensePointLog {
+    id: number;
+    driver_id: number;
+    change_value: number;
+    before_points: number;
+    after_points: number;
+    reason: string;
+    operator: string;
+    created_at: string;
+}
+
+export interface RaceWithResults {
+    race: RaceRow;
+    results: Array<RaceResultRow & { driver_name: string; steam_id: string }>;
+}
+
+export type SortField = 'points' | 'license_points' | 'total_races';
+export type SortOrder = 'asc' | 'desc';
+
+export interface ImportResult {
+    raceName: string;
+    newDrivers: number;
+    updatedDrivers: number;
+    resultCount: number;
+}

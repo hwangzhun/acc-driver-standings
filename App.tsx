@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { List } from 'lucide-react';
 import Header from './components/Header';
 import ResultList from './components/ResultList';
-import Leaderboard from './components/Leaderboard';
-import DriverDetail from './components/DriverDetail';
+import SessionResultView from './components/SessionResultView';
+import DriverStandingsPage from './components/DriverStandingsPage';
+import DbDriverDetailPage from './components/DbDriverDetailPage';
+import DbRaceDetailPage from './components/DbRaceDetailPage';
+import AdminStandingsPage from './components/AdminStandingsPage';
 import { type AccResultData, type ParsedResultCsv, type ResultIndexItem } from './types';
 import { getRaceJsonUrl, listRaceJsonObjects } from './services/cosClient';
 import {
@@ -13,51 +15,94 @@ import {
     mapCosObjectsToResultIndex,
     parseResultCsv,
 } from './utils';
+import { initStandingsApi } from './services/standingsApi';
 
-/** 与 JSON `sessionType` 一致：R/Q/P */
-function sessionTypeLabelCn(sessionType: string): string {
-    switch (sessionType) {
-        case 'R':
-            return '正赛';
-        case 'Q':
-            return '排位';
-        case 'P':
-            return '练习';
-        default:
-            return sessionType;
+export type AppRoute =
+    | { type: 'home' }
+    | { type: 'result'; id: string }
+    | { type: 'drivers' }
+    | { type: 'driver'; id: number }
+    | { type: 'race'; id: number }
+    | { type: 'admin' }
+    | { type: 'adminDriver'; id: number };
+
+function parseRoute(): AppRoute {
+    const raw = window.location.hash.replace(/^#/, '').replace(/^\//, '') || '';
+    if (raw.startsWith('result/')) {
+        const id = decodeURIComponent(raw.slice('result/'.length));
+        return id ? { type: 'result', id } : { type: 'home' };
     }
+    if (raw.startsWith('admin/driver/')) {
+        const n = Number(raw.slice('admin/driver/'.length));
+        return Number.isFinite(n) ? { type: 'adminDriver', id: n } : { type: 'admin' };
+    }
+    if (raw === 'admin' || raw.startsWith('admin/')) return { type: 'admin' };
+    if (raw === 'drivers') return { type: 'drivers' };
+    if (raw.startsWith('driver/')) {
+        const n = Number(raw.slice('driver/'.length));
+        return Number.isFinite(n) ? { type: 'driver', id: n } : { type: 'drivers' };
+    }
+    if (raw.startsWith('race/')) {
+        const n = Number(raw.slice('race/'.length));
+        return Number.isFinite(n) ? { type: 'race', id: n } : { type: 'home' };
+    }
+    return { type: 'home' };
 }
 
-function formatSessionDateLabel(raw?: string | null): string {
-    if (!raw) return '';
-    const d = new Date(raw);
-    if (!Number.isNaN(d.getTime())) {
-        return new Intl.DateTimeFormat('zh-CN', {
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-        }).format(d);
-    }
-    return raw;
+const RACE_BACK_KEY = 'acc-race-detail-back-hash';
+
+function NavLink({ href, label, active }: { href: string; label: string; active: boolean }) {
+    return (
+        <a
+            href={href}
+            className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                active
+                    ? 'bg-slate-700 border-slate-500 text-white'
+                    : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:border-slate-500 hover:text-white'
+            }`}
+        >
+            {label}
+        </a>
+    );
 }
 
 const App: React.FC = () => {
     const resultsSource = (import.meta.env.VITE_RESULTS_SOURCE ?? 'static').toLowerCase();
+    const [route, setRoute] = useState<AppRoute>(() => parseRoute());
     const [indexItems, setIndexItems] = useState<ResultIndexItem[]>([]);
-    const [selectedId, setSelectedId] = useState<string | null>(null);
+    const [indexLoading, setIndexLoading] = useState(true);
+    const [indexError, setIndexError] = useState<string | null>(null);
     const [selectedResult, setSelectedResult] = useState<ParsedResultCsv | null>(null);
     const [jsonData, setJsonData] = useState<AccResultData | null>(null);
-    const [selectedCarId, setSelectedCarId] = useState<number | null>(null);
-    const [manualPenaltyMsByCarId, setManualPenaltyMsByCarId] = useState<Record<number, number>>({});
-    const [classFilter, setClassFilter] = useState<'all' | 'GT2' | 'GT3' | 'GT4'>('all');
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
+    const [resultLoading, setResultLoading] = useState(false);
+    const [resultError, setResultError] = useState<string | null>(null);
+    const [sqliteReady, setSqliteReady] = useState(false);
+    const [sqliteError, setSqliteError] = useState<string | null>(null);
+
+    useEffect(() => {
+        const sync = () => setRoute(parseRoute());
+        sync();
+        window.addEventListener('hashchange', sync);
+        return () => window.removeEventListener('hashchange', sync);
+    }, []);
+
+    useEffect(() => {
+        void initStandingsApi()
+            .then(() => {
+                setSqliteReady(true);
+                setSqliteError(null);
+            })
+            .catch((err) => {
+                const msg = err instanceof Error ? err.message : String(err);
+                setSqliteError(`榜单服务不可用：${msg}（请先运行 npm run dev:server 或 npm run dev:all）`);
+            });
+    }, []);
 
     useEffect(() => {
         const loadIndex = async () => {
             try {
-                setLoading(true);
-                setError(null);
+                setIndexLoading(true);
+                setIndexError(null);
                 let items: ResultIndexItem[] = [];
                 if (resultsSource === 'cos') {
                     const prefix = import.meta.env.VITE_COS_PREFIX ?? '';
@@ -69,36 +114,21 @@ const App: React.FC = () => {
                 setIndexItems(items);
             } catch (err) {
                 const detail = err instanceof Error ? err.message : String(err);
-                setError(
+                setIndexError(
                     resultsSource === 'cos'
                         ? `加载 COS 索引失败：${detail}（请检查 STS 接口、Bucket/Region 与 CORS）`
                         : `加载索引失败：${detail}`
                 );
             } finally {
-                setLoading(false);
+                setIndexLoading(false);
             }
         };
         void loadIndex();
     }, [resultsSource]);
 
-    useEffect(() => {
-        const parseHash = () => {
-            const hash = window.location.hash.replace(/^#/, '');
-            if (!hash.startsWith('/result/')) {
-                setSelectedId(null);
-                return;
-            }
-            const id = decodeURIComponent(hash.slice('/result/'.length));
-            setSelectedId(id || null);
-        };
-
-        parseHash();
-        window.addEventListener('hashchange', parseHash);
-        return () => window.removeEventListener('hashchange', parseHash);
-    }, []);
-
+    const selectedId = route.type === 'result' ? route.id : null;
     const selectedItem = useMemo(
-        () => indexItems.find((i) => i.id === selectedId) ?? null,
+        () => (selectedId ? indexItems.find((i) => i.id === selectedId) ?? null : null),
         [indexItems, selectedId]
     );
 
@@ -107,14 +137,13 @@ const App: React.FC = () => {
             if (!selectedItem) {
                 setSelectedResult(null);
                 setJsonData(null);
-                setSelectedCarId(null);
-                setManualPenaltyMsByCarId({});
-                setClassFilter('all');
+                setResultLoading(false);
+                setResultError(null);
                 return;
             }
             try {
-                setLoading(true);
-                setError(null);
+                setResultLoading(true);
+                setResultError(null);
                 const rawPath = selectedItem.dataPath ?? selectedItem.csvPath;
                 const path =
                     resultsSource === 'cos' && !/^https?:\/\//i.test(rawPath)
@@ -130,11 +159,9 @@ const App: React.FC = () => {
                     setSelectedResult(parseResultCsv(text));
                     setJsonData(null);
                 }
-                setManualPenaltyMsByCarId({});
-                setClassFilter('all');
             } catch (err) {
                 const detail = err instanceof Error ? err.message : String(err);
-                setError(
+                setResultError(
                     resultsSource === 'cos'
                         ? `加载成绩失败：${detail}（可能是 STS 过期、对象权限或 CORS 限制）`
                         : `加载成绩失败：${detail}`
@@ -142,7 +169,7 @@ const App: React.FC = () => {
                 setSelectedResult(null);
                 setJsonData(null);
             } finally {
-                setLoading(false);
+                setResultLoading(false);
             }
         };
         void loadResult();
@@ -187,7 +214,6 @@ const App: React.FC = () => {
             const totalTime = parseTimeToMs(iTotalTime >= 0 ? row[iTotalTime] : '');
             const lapCount = Number.parseInt((iLapCount >= 0 ? row[iLapCount] : '') || '0', 10) || 0;
             const carName = iCarModelName >= 0 ? row[iCarModelName] : '';
-            const dsq = (iRank >= 0 ? row[iRank] : '').trim().toUpperCase() === 'DSQ';
 
             return {
                 car: {
@@ -272,123 +298,165 @@ const App: React.FC = () => {
         };
     }, [jsonData, selectedItem, selectedResult]);
 
+    const [raceShowSteam, setRaceShowSteam] = useState(false);
+
     useEffect(() => {
-        const first = viewData?.sessionResult.leaderBoardLines[0];
-        setSelectedCarId(first ? first.car.carId : null);
-    }, [viewData]);
+        if (route.type !== 'race') return;
+        try {
+            setRaceShowSteam(sessionStorage.getItem('acc-race-show-steam') === '1');
+            sessionStorage.removeItem('acc-race-show-steam');
+        } catch {
+            setRaceShowSteam(false);
+        }
+    }, [route]);
 
-    const sessionDateLabel = useMemo(() => {
-        const fromJson = formatSessionDateLabel(viewData?.exportedAt);
-        if (fromJson) return fromJson;
-        return formatSessionDateLabel(selectedItem?.date);
-    }, [selectedItem?.date, viewData?.exportedAt]);
+    const isStandingsSection =
+        route.type === 'drivers' ||
+        route.type === 'driver' ||
+        route.type === 'race' ||
+        route.type === 'admin' ||
+        route.type === 'adminDriver';
 
-    const setManualPenaltyForCar = (carId: number, ms: number) => {
-        const clamped = Math.min(9999_000, Math.max(0, Math.round(ms)));
-        setManualPenaltyMsByCarId((prev) => {
-            if (clamped === 0) {
-                const next = { ...prev };
-                delete next[carId];
-                return next;
-            }
-            return { ...prev, [carId]: clamped };
-        });
+    const navActive = {
+        sessions: route.type === 'home' || route.type === 'result',
+        drivers: route.type === 'drivers' || route.type === 'driver' || route.type === 'race',
+        admin: route.type === 'admin' || route.type === 'adminDriver',
+    };
+
+    const headerNav = (
+        <>
+            <NavLink href="#/" label="单场成绩" active={navActive.sessions} />
+            <NavLink href="#/drivers" label="车手榜单" active={navActive.drivers} />
+            <NavLink href="#/admin" label="管理" active={navActive.admin} />
+        </>
+    );
+
+    const openDriverPublic = (id: number) => {
+        window.location.hash = `/driver/${id}`;
+    };
+
+    const openRaceFromDriver = (info: number | { raceId: number; resultIndexId?: string | null }) => {
+        const raceId = typeof info === 'number' ? info : info.raceId;
+        const resultIndexId = typeof info === 'number' ? undefined : info.resultIndexId;
+        try {
+            sessionStorage.setItem(RACE_BACK_KEY, window.location.hash.replace(/^#/, ''));
+            const adminFlow = /admin\/driver\//.test(window.location.hash);
+            sessionStorage.setItem('acc-race-show-steam', adminFlow ? '1' : '0');
+        } catch {
+            /* ignore */
+        }
+        if (resultIndexId) {
+            window.location.hash = `/result/${encodeURIComponent(resultIndexId)}`;
+        } else {
+            window.location.hash = `/race/${raceId}`;
+        }
+    };
+
+    const raceDetailBack = () => {
+        let h = '/drivers';
+        try {
+            h = sessionStorage.getItem(RACE_BACK_KEY) || '/drivers';
+            sessionStorage.removeItem(RACE_BACK_KEY);
+        } catch {
+            /* ignore */
+        }
+        window.location.hash = h.startsWith('/') ? h : `/${h}`;
     };
 
     return (
         <div className="min-h-screen flex flex-col bg-slate-900 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]">
-            <Header />
+            <Header nav={headerNav} />
 
             <main className="flex-grow p-4 md:p-6 max-w-[1800px] mx-auto w-full space-y-6">
-                {loading && (
+                {isStandingsSection && (
+                    <>
+                        {sqliteError && (
+                            <div className="bg-red-950/40 border border-red-800 rounded-xl p-4 text-red-200">
+                                {sqliteError}
+                            </div>
+                        )}
+                        {!sqliteReady && !sqliteError && (
+                            <div className="bg-slate-800 border border-slate-700 rounded-xl p-8 text-slate-300">
+                                正在初始化车手榜单数据库…
+                            </div>
+                        )}
+                        {sqliteReady && route.type === 'drivers' && (
+                            <DriverStandingsPage onOpenDriver={openDriverPublic} />
+                        )}
+                        {sqliteReady && route.type === 'driver' && (
+                            <DbDriverDetailPage
+                                driverId={route.id}
+                                showSteamId={false}
+                                onBack={() => {
+                                    window.location.hash = '/drivers';
+                                }}
+                                onOpenRace={openRaceFromDriver}
+                            />
+                        )}
+                        {sqliteReady && route.type === 'race' && (
+                            <DbRaceDetailPage
+                                raceId={route.id}
+                                showSteamId={raceShowSteam}
+                                onBack={raceDetailBack}
+                            />
+                        )}
+                        {sqliteReady && route.type === 'admin' && (
+                            <AdminStandingsPage
+                                onOpenDriver={(id) => {
+                                    window.location.hash = `/admin/driver/${id}`;
+                                }}
+                            />
+                        )}
+                        {sqliteReady && route.type === 'adminDriver' && (
+                            <DbDriverDetailPage
+                                driverId={route.id}
+                                showSteamId
+                                onBack={() => {
+                                    window.location.hash = '/admin';
+                                }}
+                                onOpenRace={openRaceFromDriver}
+                            />
+                        )}
+                    </>
+                )}
+
+                {!isStandingsSection && indexLoading && (
                     <div className="bg-slate-800 border border-slate-700 rounded-xl p-8 text-slate-300">
                         正在加载数据...
                     </div>
                 )}
-                {!loading && error && (
-                    <div className="bg-red-950/40 border border-red-800 rounded-xl p-4 text-red-200">
-                        {error}
-                    </div>
+                {!isStandingsSection && !indexLoading && indexError && (
+                    <div className="bg-red-950/40 border border-red-800 rounded-xl p-4 text-red-200">{indexError}</div>
                 )}
-                {!loading && !error && !selectedItem && (
+                {!isStandingsSection && !indexLoading && !indexError && !selectedItem && (
                     <ResultList items={indexItems} onOpenResult={openResult} />
                 )}
-                {!loading && !error && selectedItem && viewData && (
-                    <div className="space-y-4">
-                        <div className="w-full">
-                            <button
-                                type="button"
-                                onClick={backToList}
-                                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-slate-800/90 border border-slate-600 text-slate-100 text-sm font-medium shadow-sm hover:bg-slate-700 hover:border-slate-500 active:scale-[0.98] transition-colors"
-                            >
-                                <List className="w-4 h-4 text-red-400 shrink-0" aria-hidden />
-                                返回成绩列表
-                            </button>
-                        </div>
-                        <div className="w-full border-b border-slate-700/80 pb-4">
-                            <h2 className="text-xl md:text-2xl font-bold text-white tracking-tight">
-                                {String(viewData.serverName ?? '').trim() || '未命名会话'}
-                            </h2>
-                            <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-400">
-                                {viewData.trackName ? (
-                                    <span className="font-mono capitalize">{viewData.trackName}</span>
-                                ) : null}
-                                {viewData.trackName && (viewData.sessionType || sessionDateLabel) ? (
-                                    <span className="text-slate-600" aria-hidden>
-                                        ·
-                                    </span>
-                                ) : null}
-                                {viewData.sessionType ? (
-                                    <span className="inline-flex items-center rounded px-2 py-0.5 text-xs font-semibold bg-slate-700/80 text-slate-200 border border-slate-600">
-                                        {sessionTypeLabelCn(viewData.sessionType)}
-                                    </span>
-                                ) : null}
-                                {sessionDateLabel ? (
-                                    <>
-                                        {viewData.sessionType ? (
-                                            <span className="text-slate-600" aria-hidden>
-                                                ·
-                                            </span>
-                                        ) : null}
-                                        <span className="font-mono text-xs text-slate-300">{sessionDateLabel}</span>
-                                    </>
-                                ) : null}
-                            </div>
-                        </div>
-                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-                            <div className="lg:col-span-8 xl:col-span-9 min-w-0">
-                                <Leaderboard
-                                    lines={viewData.sessionResult.leaderBoardLines}
-                                    sessionType={viewData.sessionType}
-                                    onSelectDriver={setSelectedCarId}
-                                    selectedCarId={selectedCarId}
-                                    penalties={[...(viewData.penalties ?? []), ...(viewData.post_race_penalties ?? [])]}
-                                    manualPenaltyMsByCarId={manualPenaltyMsByCarId}
-                                    trackName={viewData.trackName}
-                                    sessionName={viewData.serverName ?? ''}
-                                    classFilter={classFilter}
-                                    onClassFilterChange={setClassFilter}
-                                />
-                            </div>
-                            <div className="lg:col-span-4 xl:col-span-3 min-w-0">
-                                <div className="sticky top-24 h-[calc(100vh-8rem)]">
-                                    <DriverDetail
-                                        carId={selectedCarId}
-                                        leaderboard={viewData.sessionResult.leaderBoardLines}
-                                        laps={viewData.laps}
-                                        sessionBestSplits={viewData.sessionResult.bestSplits}
-                                        sessionType={viewData.sessionType}
-                                        sessionTitle={String(viewData.serverName ?? '').trim() || undefined}
-                                        trackName={viewData.trackName || undefined}
-                                        penalties={[...(viewData.penalties ?? []), ...(viewData.post_race_penalties ?? [])]}
-                                        manualPenaltyMsByCarId={manualPenaltyMsByCarId}
-                                        onManualPenaltyChange={setManualPenaltyForCar}
-                                    />
-                                </div>
-                            </div>
-                        </div>
+                {!isStandingsSection && !indexLoading && !indexError && selectedItem && resultLoading && (
+                    <div className="bg-slate-800 border border-slate-700 rounded-xl p-8 text-slate-300">
+                        正在加载本场成绩…
                     </div>
                 )}
+                {!isStandingsSection && !indexLoading && !indexError && selectedItem && !resultLoading && resultError && (
+                    <div className="bg-red-950/40 border border-red-800 rounded-xl p-4 text-red-200">{resultError}</div>
+                )}
+                {!isStandingsSection &&
+                    !indexLoading &&
+                    !indexError &&
+                    selectedItem &&
+                    !resultLoading &&
+                    !resultError &&
+                    viewData && <SessionResultView viewData={viewData} onBack={backToList} />}
+                {!isStandingsSection &&
+                    !indexLoading &&
+                    !indexError &&
+                    selectedItem &&
+                    !resultLoading &&
+                    !resultError &&
+                    !viewData && (
+                        <div className="bg-slate-800 border border-slate-700 rounded-xl p-8 text-slate-400">
+                            无法解析本场成绩数据。
+                        </div>
+                    )}
             </main>
 
             <footer className="bg-slate-950 text-slate-600 text-center p-4 text-xs border-t border-slate-900 mt-auto">

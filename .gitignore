@@ -4,6 +4,9 @@ node_modules/
 # Build
 dist/
 
+# Local SQLite (standings API)
+data/*.sqlite
+
 # Local env / secrets
 .env
 .env.*

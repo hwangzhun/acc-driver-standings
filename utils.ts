@@ -6,7 +6,9 @@ import {
   type ParsedResultCsv,
   type ResultIndexItem,
 } from './types';
+import type { DriverRaceHistory } from './db/standingsTypes';
 import type { CosRaceObjectItem } from './services/cosClient';
+import { isSchema2Payload, schema2ToAccResultData } from './utils/schema2ToAccResultData';
 
 /** 低于 1 秒的 penaltyValue（如 DriveThrough 导出 +0:00.001）不计入 JSON 罚时汇总，罚则条目仍保留展示。 */
 export const JSON_TIME_PENALTY_SUM_MIN_MS = 1000;
@@ -242,6 +244,9 @@ export function parseAccResultsPayload(buf: ArrayBuffer): AccResultData {
     const raw = root.rawData as AccResultData;
     const exportedAt = typeof root.exportedAt === 'string' ? root.exportedAt : undefined;
     return exportedAt ? { ...raw, exportedAt } : raw;
+  }
+  if (isSchema2Payload(parsed)) {
+    return schema2ToAccResultData(parsed);
   }
   if (isAccResultDataLike(parsed)) {
     const data = parsed as AccResultData;
@@ -591,6 +596,56 @@ export async function fetchCsvText(csvPath: string): Promise<string> {
   return stripUtf8Bom(text);
 }
 
+/**
+ * 加载当前配置下的成绩索引列表。
+ * 行为与 App.tsx 中 loadIndex 逻辑完全一致（static / cos 分支）。
+ */
+export async function loadResultsIndexItems(): Promise<ResultIndexItem[]> {
+  const resultsSource = (import.meta.env.VITE_RESULTS_SOURCE ?? 'static').toLowerCase();
+  if (resultsSource === 'cos') {
+    const prefix = import.meta.env.VITE_COS_PREFIX ?? '';
+    const cosItems = await listRaceJsonObjects(prefix);
+    return mapCosObjectsToResultIndex(cosItems);
+  }
+  return fetchResultsIndex();
+}
+
+/**
+ * 按上传文件名（source_file_name）的 basename，大小写不敏感匹配索引项的 id。
+ * 匹配逻辑：取 dataPath ?? csvPath，去掉路径前缀取 basename（decodeURIComponent），
+ * 与 sourceFileName 的 basename 做大小写不敏感相等比较。
+ * 返回匹配到的 ResultIndexItem.id；无匹配则返回 null。
+ */
+export function matchResultIndexIdBySourceFileName(
+  sourceFileName: string,
+  items: ResultIndexItem[]
+): string | null {
+  const srcBase = basenameNorm(sourceFileName);
+  if (!srcBase) return null;
+  for (const item of items) {
+    const path = item.dataPath ?? item.csvPath;
+    if (!path) continue;
+    if (basenameNorm(path) === srcBase) return item.id;
+  }
+  return null;
+}
+
+function basenameNorm(p: string): string {
+  const tail = p.replace(/\\/g, '/').split('/').pop() ?? '';
+  try {
+    return decodeURIComponent(tail).toLowerCase();
+  } catch {
+    return tail.toLowerCase();
+  }
+}
+
+/** 若 manualId 非空且在索引中存在，返回该 id；否则返回 null（不采用非法值）。 */
+export function resolveManualResultIndexId(manualId: string | undefined | null, items: ResultIndexItem[]): string | null {
+  const t = manualId?.trim();
+  if (!t) return null;
+  return items.some((i) => i.id === t) ? t : null;
+}
+
 /** 解析成绩 CSV（支持首行元信息、引号转义、空值） */
 export function parseResultCsv(text: string): ParsedResultCsv {
   const normalized = stripUtf8Bom(text).replace(/\r\n?/g, '\n');
@@ -630,4 +685,30 @@ export function parseResultCsv(text: string): ParsedResultCsv {
     headers,
     rows: normalizedRows,
   };
+}
+
+/** 与单场成绩页一致：sessionType 代码 → 中文 */
+export function sessionTypeLabelCn(sessionType: string): string {
+  switch (sessionType) {
+    case 'R':
+      return '正赛';
+    case 'Q':
+      return '排位';
+    case 'P':
+      return '练习';
+    default:
+      return sessionType || '—';
+  }
+}
+
+/** 车手详情「参赛记录」→ 复用 ResultList 所需的 ResultIndexItem（当前仓库内无引用，保留作扩展） */
+export function driverRaceHistoryToResultIndexItems(rows: DriverRaceHistory[]): ResultIndexItem[] {
+  return rows.map((r) => ({
+    id: String(r.race_id),
+    title: r.race_name,
+    track: r.track_name || '',
+    date: (r.race_date || '').slice(0, 10),
+    sessionType: '正赛',
+    csvPath: '',
+  }));
 }
