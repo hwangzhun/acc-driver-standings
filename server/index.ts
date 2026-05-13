@@ -31,6 +31,12 @@ function openDatabase(): Database {
     const database = new Database(SQLITE_PATH);
     database.pragma('journal_mode = WAL');
     database.exec(STANDINGS_SCHEMA_SQL);
+
+    const tierCol = database.prepare('PRAGMA table_info(drivers)').all() as Array<{ name: string }>;
+    if (!tierCol.some((c) => c.name === 'tier')) {
+        database.exec("ALTER TABLE drivers ADD COLUMN tier TEXT NOT NULL DEFAULT 'Rookie'");
+    }
+
     return database;
 }
 
@@ -114,12 +120,12 @@ app.get('/api/drivers', (req: Request, res: Response) => {
 
     const sql = hasSearch
         ? `SELECT d.id, d.name, d.steam_id, d.points, d.license_points,
-               d.total_races, d.podium_count, d.ptw_count, d.top10_count
+               d.total_races, d.podium_count, d.ptw_count, d.top10_count, d.tier
         FROM drivers d
         WHERE d.name LIKE ? OR d.steam_id LIKE ?
         ORDER BY d.${col} ${dir}, d.name ASC`
         : `SELECT d.id, d.name, d.steam_id, d.points, d.license_points,
-               d.total_races, d.podium_count, d.ptw_count, d.top10_count
+               d.total_races, d.podium_count, d.ptw_count, d.top10_count, d.tier
         FROM drivers d
         ORDER BY d.${col} ${dir}, d.name ASC`;
 
@@ -171,6 +177,27 @@ app.get('/api/drivers/:id/license-logs', (req: Request, res: Response) => {
         'SELECT * FROM license_point_logs WHERE driver_id = ? ORDER BY created_at DESC'
     ).all(id);
     res.json(rows);
+});
+
+app.patch('/api/drivers/:id/tier', (req: Request, res: Response) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+        res.status(400).json({ error: 'Invalid id' });
+        return;
+    }
+    const { tier } = req.body as { tier?: unknown };
+    const VALID_TIERS = ['Rookie', 'Bronze', 'Silver', 'Gold', 'Platinum'];
+    if (typeof tier !== 'string' || !VALID_TIERS.includes(tier)) {
+        res.status(400).json({ error: 'Invalid tier value' });
+        return;
+    }
+    const existing = db.prepare('SELECT id FROM drivers WHERE id = ?').get(id);
+    if (!existing) {
+        res.status(404).json({ error: 'Driver not found' });
+        return;
+    }
+    db.prepare("UPDATE drivers SET tier = ?, updated_at = datetime('now') WHERE id = ?").run(tier, id);
+    res.json({ ok: true });
 });
 
 app.post('/api/drivers/:id/license', (req: Request, res: Response) => {

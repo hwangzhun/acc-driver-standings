@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import type { DriverStanding, SortField } from '../db/standingsTypes';
-import { getDrivers, adminImportRace, postDriverLicenseChange } from '../services/standingsApi';
+import { VALID_DRIVER_TIERS, type DriverTier } from '../db/standingsTypes';
+import DriverTierBadge from './DriverTierBadge';
+import { getDrivers, adminImportRace, postDriverLicenseChange, patchDriverTier } from '../services/standingsApi';
 import {
     parseJsonToResults, type AccSchema2,
 } from '../utils/standingsImport';
@@ -39,6 +41,7 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
     const [licenseDriver, setLicenseDriver] = useState<DriverStanding | null>(null);
     const [licenseChange, setLicenseChange] = useState(0);
     const [licenseReason, setLicenseReason] = useState('');
+    const [tierChange, setTierChange] = useState<DriverTier>('Rookie');
     const [licenseSubmitting, setLicenseSubmitting] = useState(false);
     const [licenseError, setLicenseError] = useState('');
 
@@ -155,17 +158,21 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
         setLicenseDriver(driver);
         setLicenseChange(0);
         setLicenseReason('');
+        setTierChange(driver.tier);
         setLicenseError('');
     };
 
     const submitLicenseChange = async () => {
         if (!licenseDriver) return;
-        if (!licenseReason.trim()) {
+        const onlyTierChanged = tierChange !== licenseDriver.tier;
+        const onlyLicenseChanged = licenseChange !== 0;
+
+        if (onlyLicenseChanged && !licenseReason.trim()) {
             setLicenseError('备注不能为空');
             return;
         }
-        if (licenseChange === 0) {
-            setLicenseError('变动分值不能为 0');
+        if (!onlyTierChanged && !onlyLicenseChanged) {
+            setLicenseError('没有需要提交的更改');
             return;
         }
 
@@ -173,18 +180,23 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
         setLicenseError('');
 
         try {
-            const current = licenseDriver.license_points;
-            if (licenseChange < 0 && current + licenseChange < 0) {
-                setLicenseError('驾照分不能低于 0');
-                setLicenseSubmitting(false);
-                return;
+            if (onlyTierChanged) {
+                await patchDriverTier(licenseDriver.id, tierChange);
             }
 
-            await postDriverLicenseChange(licenseDriver.id, {
-                changeValue: licenseChange,
-                reason: licenseReason.trim(),
-                operator: 'admin',
-            });
+            if (onlyLicenseChanged) {
+                const current = licenseDriver.license_points;
+                if (licenseChange < 0 && current + licenseChange < 0) {
+                    setLicenseError('驾照分不能低于 0');
+                    setLicenseSubmitting(false);
+                    return;
+                }
+                await postDriverLicenseChange(licenseDriver.id, {
+                    changeValue: licenseChange,
+                    reason: licenseReason.trim(),
+                    operator: 'admin',
+                });
+            }
             setLicenseDriver(null);
             void loadDrivers();
         } catch (err) {
@@ -293,6 +305,7 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
                                     <th className="p-3 text-left w-12">#</th>
                                     <th className="p-3 text-left">车手</th>
                                     <th className="p-3 text-left">SteamID</th>
+                                    <th className="p-3 text-left">等级</th>
                                     <th className="p-3 text-right">积分</th>
                                     <th className="p-3 text-right">驾照分</th>
                                     <th className="p-3 text-right">场次</th>
@@ -303,13 +316,13 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
                             <tbody className="divide-y divide-slate-700/60">
                                 {driversLoading ? (
                                     <tr>
-                                        <td colSpan={8} className="p-8 text-center text-slate-400">
+                                        <td colSpan={9} className="p-8 text-center text-slate-400">
                                             加载中…
                                         </td>
                                     </tr>
                                 ) : drivers.length === 0 ? (
                                     <tr>
-                                        <td colSpan={8} className="p-8 text-center text-slate-400">
+                                        <td colSpan={9} className="p-8 text-center text-slate-400">
                                             暂无数据
                                         </td>
                                     </tr>
@@ -324,6 +337,9 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
                                                 {d.name}
                                             </td>
                                             <td className="p-3 text-slate-400 font-mono text-xs">{d.steam_id}</td>
+                                            <td className="p-3">
+                                                <DriverTierBadge tier={d.tier} />
+                                            </td>
                                             <td className="p-3 text-right text-amber-400 font-semibold">{d.points}</td>
                                             <td className="p-3 text-right">
                                                 <span className={`font-semibold ${d.license_points <= 6 ? 'text-orange-400' : 'text-emerald-400'}`}>
@@ -338,7 +354,7 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
                                                     onClick={() => openLicenseModal(d)}
                                                     className="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-700 border border-slate-600 text-slate-200 hover:bg-slate-600 hover:border-slate-500 transition-colors"
                                                 >
-                                                    调整驾照分
+                                                    修改评级/驾驶分
                                                 </button>
                                             </td>
                                         </tr>
@@ -355,13 +371,27 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
                     <div className="absolute inset-0 bg-black/60" onClick={() => setLicenseDriver(null)} />
                     <div className="relative bg-slate-800 border border-slate-600 rounded-xl p-6 w-full max-w-md shadow-2xl">
-                        <h3 className="text-lg font-bold text-white mb-1">调整驾照分</h3>
+                        <h3 className="text-lg font-bold text-white mb-1">修改评级/驾驶分</h3>
                         <p className="text-sm text-slate-400 mb-5">
                             {licenseDriver.name} · 当前{' '}
-                            <span className="font-bold text-white">{licenseDriver.license_points}</span> 分
+                            <span className="font-bold text-white">{licenseDriver.license_points}</span> 分 · 等级{' '}
+                            <span className="font-bold text-white">{licenseDriver.tier}</span>
                         </p>
 
                         <div className="space-y-4">
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-2">等级</label>
+                                <select
+                                    value={tierChange}
+                                    onChange={(e) => setTierChange(e.target.value as DriverTier)}
+                                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-red-500 cursor-pointer"
+                                >
+                                    {VALID_DRIVER_TIERS.map((t) => (
+                                        <option key={t} value={t}>{t}</option>
+                                    ))}
+                                </select>
+                            </div>
+
                             <div>
                                 <label className="block text-xs text-slate-400 mb-2">变动分值</label>
                                 <div className="flex gap-2">

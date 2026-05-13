@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Search, ChevronUp, ChevronDown } from 'lucide-react';
 import type { DriverStanding, SortField } from '../db/standingsTypes';
 import { getDrivers } from '../services/standingsApi';
+import DriverTierBadge from './DriverTierBadge';
 
 const SORT_OPTIONS: { value: SortField; label: string }[] = [
     { value: 'points', label: '积分' },
@@ -94,11 +95,12 @@ const DriverStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
 
             <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
                 <div className="overflow-x-auto">
-                    <table className="w-full min-w-[900px] text-sm">
+                    <table className="w-full min-w-[1000px] text-sm">
                         <thead>
                             <tr className="bg-slate-900 text-slate-400 text-xs uppercase">
                                 <th className="p-3 text-left w-12">#</th>
                                 <th className="p-3 text-left">车手</th>
+                                <th className="p-3 text-left">等级</th>
                                 <th className="p-3 text-right">积分</th>
                                 <th className="p-3 text-right">驾照分</th>
                                 <th className="p-3 text-right">场次</th>
@@ -110,13 +112,13 @@ const DriverStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
                         <tbody className="divide-y divide-slate-700/60">
                             {loading ? (
                                 <tr>
-                                    <td colSpan={8} className="p-8 text-center text-slate-400">
+                                    <td colSpan={9} className="p-8 text-center text-slate-400">
                                         加载中…
                                     </td>
                                 </tr>
                             ) : drivers.length === 0 ? (
                                 <tr>
-                                    <td colSpan={8} className="p-8 text-center text-slate-400">
+                                    <td colSpan={9} className="p-8 text-center text-slate-400">
                                         暂无数据
                                     </td>
                                 </tr>
@@ -129,6 +131,7 @@ const DriverStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
                                     >
                                         <td className="p-3 text-slate-400 font-mono text-xs">{idx + 1}</td>
                                         <td className="p-3 text-slate-100 font-medium">{d.name}</td>
+                                        <td className="p-3"><DriverTierBadge tier={d.tier} /></td>
                                         <td className="p-3 text-right text-amber-400 font-semibold">{d.points}</td>
                                         <td className="p-3 text-right">
                                             <span className={`font-semibold ${d.license_points <= 6 ? 'text-orange-400' : 'text-emerald-400'}`}>

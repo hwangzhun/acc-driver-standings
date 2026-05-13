@@ -1,3 +1,11 @@
+export type DriverTier = 'Rookie' | 'Bronze' | 'Silver' | 'Gold' | 'Platinum';
+
+export const VALID_DRIVER_TIERS: DriverTier[] = ['Rookie', 'Bronze', 'Silver', 'Gold', 'Platinum'];
+
+export function isValidDriverTier(v: string): v is DriverTier {
+    return VALID_DRIVER_TIERS.includes(v as DriverTier);
+}
+
 export interface DriverRow {
     id: number;
     name: string;
@@ -8,6 +16,7 @@ export interface DriverRow {
     podium_count: number;
     ptw_count: number;
     top10_count: number;
+    tier: DriverTier;
     created_at: string;
     updated_at: string;
 }
@@ -60,6 +69,7 @@ export interface DriverStanding {
     podium_count: number;
     ptw_count: number;
     top10_count: number;
+    tier: DriverTier;
 }
 
 export interface DriverRaceHistory {

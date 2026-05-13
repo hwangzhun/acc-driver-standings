@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import type { DriverRow, DriverRaceHistory, LicensePointLog } from '../db/standingsTypes';
-import { getDriverById, getDriverRaceHistory, getLicensePointLogs } from '../services/standingsApi';
+import type { DriverRow, DriverRaceHistory, LicensePointLog, DriverTier } from '../db/standingsTypes';
+import { getDriverById, getDriverRaceHistory, getLicensePointLogs, patchDriverTier } from '../services/standingsApi';
 import { ArrowLeft, Calendar, MapPin, Trophy, Star, Target } from 'lucide-react';
+import DriverTierBadge from './DriverTierBadge';
 
 const STAT_CARDS = [
     { key: 'points', label: '积分', icon: Trophy, color: 'text-amber-400' },
@@ -15,6 +16,8 @@ const STAT_CARDS = [
 interface Props {
     driverId: number;
     showSteamId: boolean;
+    allowTierEdit?: boolean;
+    onTierChange?: (tier: DriverTier) => void;
     onBack: () => void;
     onOpenRace: (raceId: number) => void;
 }
@@ -28,11 +31,12 @@ function formatTime(ms: number): string {
     return `${s}.${String(ms2).padStart(3, '0')}`;
 }
 
-const DbDriverDetailPage: React.FC<Props> = ({ driverId, showSteamId, onBack, onOpenRace }) => {
+const DbDriverDetailPage: React.FC<Props> = ({ driverId, showSteamId, allowTierEdit, onTierChange, onBack, onOpenRace }) => {
     const [driver, setDriver] = useState<DriverRow | null | undefined>(undefined);
     const [history, setHistory] = useState<DriverRaceHistory[]>([]);
     const [logs, setLogs] = useState<LicensePointLog[]>([]);
     const [loadError, setLoadError] = useState<string | null>(null);
+    const [tierSaving, setTierSaving] = useState(false);
 
     useEffect(() => {
         let cancelled = false;
@@ -103,7 +107,32 @@ const DbDriverDetailPage: React.FC<Props> = ({ driverId, showSteamId, onBack, on
             <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
                 <div className="flex flex-col sm:flex-row sm:items-start gap-4">
                     <div className="flex-1">
-                        <h2 className="text-2xl font-bold text-white">{driver.name}</h2>
+                        <div className="flex items-center gap-3">
+                            <h2 className="text-2xl font-bold text-white">{driver.name}</h2>
+                            <DriverTierBadge tier={driver.tier} />
+                            {allowTierEdit && onTierChange && (
+                                <select
+                                    value={driver.tier}
+                                    onChange={async (e) => {
+                                        const newTier = e.target.value as DriverTier;
+                                        setDriver((prev) => prev ? { ...prev, tier: newTier } : prev);
+                                        try {
+                                            await patchDriverTier(driverId, newTier);
+                                        } catch {
+                                            if (driver) setDriver({ ...driver });
+                                        }
+                                    }}
+                                    disabled={tierSaving}
+                                    className="bg-slate-700 border border-slate-500 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-red-500 disabled:opacity-50"
+                                >
+                                    <option value="Rookie">Rookie</option>
+                                    <option value="Bronze">Bronze</option>
+                                    <option value="Silver">Silver</option>
+                                    <option value="Gold">Gold</option>
+                                    <option value="Platinum">Platinum</option>
+                                </select>
+                            )}
+                        </div>
                         {showSteamId && driver.steam_id && (
                             <p className="text-sm text-slate-400 font-mono mt-1">{driver.steam_id}</p>
                         )}

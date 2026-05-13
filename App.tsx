@@ -411,6 +411,11 @@ const App: React.FC = () => {
                             <DbDriverDetailPage
                                 driverId={route.id}
                                 showSteamId
+                                allowTierEdit
+                                onTierChange={(tier) => {
+                                    // tier edit is handled inline via patchDriverTier inside DbDriverDetailPage
+                                    void tier;
+                                }}
                                 onBack={() => {
                                     window.location.hash = '/admin';
                                 }}

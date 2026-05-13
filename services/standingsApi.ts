@@ -106,6 +106,15 @@ export async function adminImportRace(
     return parseJson(res);
 }
 
+export async function patchDriverTier(driverId: number, tier: string): Promise<{ ok: boolean }> {
+    const res = await fetch(apiUrl(`/api/drivers/${driverId}/tier`), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tier }),
+    });
+    return parseJson<{ ok: boolean }>(res);
+}
+
 export async function postDriverLicenseChange(
     driverId: number,
     payload: { changeValue: number; reason: string; operator?: string }

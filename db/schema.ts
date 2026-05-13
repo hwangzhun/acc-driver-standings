@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS drivers (
     podium_count INTEGER DEFAULT 0,
     ptw_count INTEGER DEFAULT 0,
     top10_count INTEGER DEFAULT 0,
+    tier TEXT NOT NULL DEFAULT 'Rookie',
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
 );
