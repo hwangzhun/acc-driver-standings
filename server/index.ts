@@ -1,7 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import express, { type Request, type Response } from 'express';
+import express, { type Request, type Response, type RequestHandler } from 'express';
+import crypto from 'crypto';
 import Database from 'better-sqlite3';
 import { STANDINGS_SCHEMA_SQL } from '../db/schema.js';
 
@@ -18,6 +19,34 @@ const SORT_FIELDS = new Set(['points', 'license_points', 'total_races']);
 
 type SortField = 'points' | 'license_points' | 'total_races';
 type SortOrder = 'asc' | 'desc';
+
+// ── Admin auth ──────────────────────────────────────────────────────────────────
+
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? (() => {
+    const generated = crypto.randomBytes(3).toString('hex');
+    // eslint-disable-next-line no-console
+    console.warn('\n[ADMIN] ADMIN_PASSWORD not set — using temporary password:', generated, '\n[ADMIN] Set ADMIN_PASSWORD env var and restart to use a permanent password.\n');
+    return generated;
+})();
+
+/** token → expiresAt (ms timestamp) */
+const tokenStore = new Map<string, number>();
+const TOKEN_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
+
+function generateToken(): string {
+    return crypto.randomBytes(32).toString('hex');
+}
+
+function requireAdmin(req: Request, res: Response, next: (err?: unknown) => void) {
+    const header = req.headers['authorization'] ?? '';
+    const token = typeof header === 'string' ? header.replace(/^Bearer /i, '').trim() : '';
+    if (!token || !tokenStore.has(token) || (tokenStore.get(token) ?? 0) < Date.now()) {
+        if (token && tokenStore.has(token)) tokenStore.delete(token); // expired cleanup
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+    }
+    next();
+}
 
 function ensureDataDir(filePath: string) {
     const dir = path.dirname(filePath);
@@ -99,6 +128,36 @@ function importRaceResult(
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 
+// ── Admin auth routes ─────────────────────────────────────────────────────────
+
+app.post('/api/admin/login', (req: Request, res: Response) => {
+    const { password } = req.body as { password?: unknown };
+    if (typeof password !== 'string' || !password) {
+        res.status(400).json({ error: '密码不能为空' });
+        return;
+    }
+    const inputBuf = Buffer.from(password, 'utf8');
+    const storedBuf = Buffer.from(ADMIN_PASSWORD, 'utf8');
+    if (inputBuf.length !== storedBuf.length || !crypto.timingSafeEqual(inputBuf, storedBuf)) {
+        res.status(401).json({ error: '密码错误' });
+        return;
+    }
+    const token = generateToken();
+    tokenStore.set(token, Date.now() + TOKEN_TTL_MS);
+    res.json({ token, expiresAt: Date.now() + TOKEN_TTL_MS });
+});
+
+app.get('/api/admin/me', requireAdmin, (_req: Request, res: Response) => {
+    res.json({ ok: true });
+});
+
+app.post('/api/admin/logout', requireAdmin, (req: Request, res: Response) => {
+    const header = req.headers['authorization'] ?? '';
+    const token = typeof header === 'string' ? header.replace(/^Bearer /i, '').trim() : '';
+    if (token) tokenStore.delete(token);
+    res.json({ ok: true });
+});
+
 app.get('/api/health', (_req: Request, res: Response) => {
     res.json({ ok: true, sqlite: SQLITE_PATH });
 });
@@ -179,7 +238,7 @@ app.get('/api/drivers/:id/license-logs', (req: Request, res: Response) => {
     res.json(rows);
 });
 
-app.patch('/api/drivers/:id/tier', (req: Request, res: Response) => {
+app.patch('/api/drivers/:id/tier', requireAdmin, (req: Request, res: Response) => {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) {
         res.status(400).json({ error: 'Invalid id' });
@@ -200,7 +259,7 @@ app.patch('/api/drivers/:id/tier', (req: Request, res: Response) => {
     res.json({ ok: true });
 });
 
-app.post('/api/drivers/:id/license', (req: Request, res: Response) => {
+app.post('/api/drivers/:id/license', requireAdmin, (req: Request, res: Response) => {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) {
         res.status(400).json({ error: 'Invalid id' });
@@ -246,6 +305,13 @@ app.post('/api/drivers/:id/license', (req: Request, res: Response) => {
     res.json({ ok: true, after_points: after });
 });
 
+app.get('/api/races', (_req: Request, res: Response) => {
+    const rows = db.prepare(
+        'SELECT id, race_name, track_name, server_name, race_date, source_file_name, session_type, created_at FROM races ORDER BY race_date DESC, id DESC'
+    ).all();
+    res.json(rows);
+});
+
 app.get('/api/races/:id', (req: Request, res: Response) => {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) {
@@ -287,7 +353,7 @@ interface ImportResultRow {
     rawData: string;
 }
 
-app.post('/api/admin/import-race', (req: Request, res: Response) => {
+app.post('/api/admin/import-race', requireAdmin, (req: Request, res: Response) => {
     const body = req.body as {
         sourceFileName?: unknown;
         raceName?: unknown;

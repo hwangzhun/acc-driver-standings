@@ -3,12 +3,8 @@ import {
   type AccResultData,
   type LeaderboardLine,
   type Penalty,
-  type ParsedResultCsv,
   type ResultIndexItem,
 } from './types';
-import type { DriverRaceHistory } from './db/standingsTypes';
-import type { CosRaceObjectItem } from './services/cosClient';
-import { isSchema2Payload, schema2ToAccResultData } from './utils/schema2ToAccResultData';
 
 /** 低于 1 秒的 penaltyValue（如 DriveThrough 导出 +0:00.001）不计入 JSON 罚时汇总，罚则条目仍保留展示。 */
 export const JSON_TIME_PENALTY_SUM_MIN_MS = 1000;
@@ -106,22 +102,6 @@ export function formatPenaltyTypeLabel(penalty: string): string {
   if (sg) return `SG${sg[1]}`;
   if (penalty === 'StopAndGo') return 'SG';
   return penalty;
-}
-
-/** 该车在会话中的非 DSQ 罚则（用于高亮与排名格展示），标签已去重且保持首次出现顺序 */
-export function getCarSessionPenaltyBadgeLabels(carId: number, penalties: Penalty[]): string[] {
-  const labels: string[] = [];
-  const seen = new Set<string>();
-  for (const p of penalties) {
-    if (p.carId !== carId) continue;
-    if (p.penalty === 'Disqualified') continue;
-    if (isIgnoredJsonPenaltyType(p.penalty)) continue;
-    const label = formatPenaltyTypeLabel(p.penalty);
-    if (seen.has(label)) continue;
-    seen.add(label);
-    labels.push(label);
-  }
-  return labels;
 }
 
 /** 是否存在至少一条非 DSQ 的 JSON 罚则（含 DriveThrough 等） */
@@ -245,9 +225,6 @@ export function parseAccResultsPayload(buf: ArrayBuffer): AccResultData {
     const exportedAt = typeof root.exportedAt === 'string' ? root.exportedAt : undefined;
     return exportedAt ? { ...raw, exportedAt } : raw;
   }
-  if (isSchema2Payload(parsed)) {
-    return schema2ToAccResultData(parsed);
-  }
   if (isAccResultDataLike(parsed)) {
     const data = parsed as AccResultData;
     const exportedAt =
@@ -279,35 +256,6 @@ function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
 /** 读取本地 .json（含 UTF-16 LE 等）并解析为 ACC 结果对象 */
 export async function readAccResultJsonFile(file: File): Promise<AccResultData> {
   const buf = await readFileAsArrayBuffer(file);
-  return parseAccResultsPayload(buf);
-}
-
-/**
- * 对相对路径做 encodeURI；完整 http(s) URL（尤其 COS 签名 URL）必须原样使用。
- * encodeURI 会把查询串里的 `%` 编成 `%25`，会破坏签名并导致返回 HTML 错误页。
- */
-function resolveFetchUrl(pathOrUrl: string | undefined | null): string {
-  const s = String(pathOrUrl ?? '').trim();
-  if (!s) {
-    throw new Error('FETCH_URL_EMPTY:缺少成绩文件路径');
-  }
-  if (/^https?:\/\//i.test(s)) return s;
-  return encodeURI(s);
-}
-
-/** 通过网络加载成绩 JSON（路径可为原生 ACC 或带 rawData 的导出包） */
-export async function fetchAccResultJson(jsonPath: string | undefined | null): Promise<AccResultData> {
-  const resp = await fetch(resolveFetchUrl(jsonPath), { cache: 'no-store' });
-  if (!resp.ok) {
-    throw new Error(`JSON_FETCH_FAILED:${resp.status}`);
-  }
-  const buf = await resp.arrayBuffer();
-  const head = new TextDecoder().decode(buf.byteLength > 200 ? buf.slice(0, 200) : buf);
-  if (head.trimStart().startsWith('<')) {
-    throw new Error(
-      'JSON_FETCH_HTML:响应为HTML而非JSON（多为签名URL被破坏；请勿对完整COS签名链接再encode）'
-    );
-  }
   return parseAccResultsPayload(buf);
 }
 
@@ -384,7 +332,6 @@ export const exportLeaderboardToCSV = (
             ? getRaceAdjustedFinishMs(leaderLine, penalties, manualPenaltyMsByCarId)
             : null;
 
-    // CSV 表头
     const headers = [
         '排名',
         '车号',
@@ -403,7 +350,6 @@ export const exportLeaderboardToCSV = (
         '取消资格原因'
     ];
 
-    // 构建 CSV 数据行
     const rows = sortedLines.map((line, index) => {
         const isDSQ = isDisqualified(line.car.carId);
         const dsqReason = getDSQReason(line.car.carId);
@@ -461,15 +407,10 @@ export const exportLeaderboardToCSV = (
         ];
     });
 
-    // 构建完整的 CSV 内容
     const csvContent = [
-        // 元数据行（可选）
         ...(trackName || sessionName ? [`赛道: ${trackName || ''}, 会话: ${sessionName || ''}`] : []),
-        // 表头
         headers.join(','),
-        // 数据行
         ...rows.map(row => row.map(cell => {
-            // 处理包含逗号、引号或换行符的单元格
             const cellStr = String(cell || '');
             if (cellStr.includes(',') || cellStr.includes('"') || cellStr.includes('\n')) {
                 return `"${cellStr.replace(/"/g, '""')}"`;
@@ -478,14 +419,12 @@ export const exportLeaderboardToCSV = (
         }).join(','))
     ].join('\n');
 
-    // 添加 BOM 以支持中文 Excel 正确显示
     const BOM = '\uFEFF';
     const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
     
-    // 生成文件名
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
     const sessionTypeName = sessionType === 'R' ? '正赛' : sessionType === 'Q' ? '排位' : '练习';
     link.download = `排行榜_${trackName || '未知赛道'}_${sessionTypeName}_${timestamp}.csv`;
@@ -495,197 +434,6 @@ export const exportLeaderboardToCSV = (
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
 };
-
-function parseCsvLine(line: string): string[] {
-  const values: string[] = [];
-  let current = '';
-  let inQuotes = false;
-
-  for (let i = 0; i < line.length; i += 1) {
-    const ch = line[i];
-    if (ch === '"') {
-      if (inQuotes && line[i + 1] === '"') {
-        current += '"';
-        i += 1;
-      } else {
-        inQuotes = !inQuotes;
-      }
-      continue;
-    }
-    if (ch === ',' && !inQuotes) {
-      values.push(current);
-      current = '';
-      continue;
-    }
-    current += ch;
-  }
-  values.push(current);
-  return values;
-}
-
-function stripUtf8Bom(text: string): string {
-  return text.replace(/^\uFEFF/, '');
-}
-
-function guessSessionTypeFromName(name: string): string {
-  const upper = name.toUpperCase();
-  if (/-R-/.test(upper) || /_R\./.test(upper)) return '正赛';
-  if (/-Q-/.test(upper) || /_Q\./.test(upper)) return '排位';
-  if (/-P-/.test(upper) || /_P\./.test(upper)) return '练习';
-  return '未知';
-}
-
-function guessTrackFromName(name: string): string {
-  const m = /-([a-z0-9_]+)-(?:r|q|p)-\d{4}-\d{2}-\d{2}/i.exec(name);
-  if (m?.[1]) return m[1].replace(/_/g, '-');
-  return 'unknown';
-}
-
-function normalizeDateLabel(raw?: string): string {
-  if (!raw) return '';
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return raw;
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-/**
- * 把 COS 对象列表映射为前端结果索引结构，兼容旧字段 csvPath。
- */
-export function mapCosObjectsToResultIndex(items: CosRaceObjectItem[]): ResultIndexItem[] {
-  return [...items]
-    .sort((a, b) => {
-      const ta = new Date(a.lastModified).getTime() || 0;
-      const tb = new Date(b.lastModified).getTime() || 0;
-      return tb - ta;
-    })
-    .map((item) => {
-      const fileName = item.key.split('/').pop() || item.key;
-      const title = fileName.replace(/\.json$/i, '');
-      return {
-        id: item.key,
-        title,
-        track: guessTrackFromName(fileName),
-        sessionType: guessSessionTypeFromName(fileName),
-        date: normalizeDateLabel(item.lastModified),
-        dataPath: item.key,
-        csvPath: item.key,
-      };
-    });
-}
-
-/** 本地静态索引读取（`VITE_RESULTS_SOURCE=static` 使用） */
-export async function fetchResultsIndex(): Promise<ResultIndexItem[]> {
-  const resp = await fetch('/results-index.json', { cache: 'no-store' });
-  if (!resp.ok) {
-    throw new Error(`INDEX_FETCH_FAILED:${resp.status}`);
-  }
-  const data = (await resp.json()) as ResultIndexItem[];
-  return Array.isArray(data) ? data : [];
-}
-
-/** 读取成绩 CSV 文本 */
-export async function fetchCsvText(csvPath: string): Promise<string> {
-  const resp = await fetch(resolveFetchUrl(csvPath), { cache: 'no-store' });
-  if (!resp.ok) {
-    throw new Error(`CSV_FETCH_FAILED:${resp.status}`);
-  }
-  const text = await resp.text();
-  return stripUtf8Bom(text);
-}
-
-/**
- * 加载当前配置下的成绩索引列表。
- * 行为与 App.tsx 中 loadIndex 逻辑完全一致（static / cos 分支）。
- */
-export async function loadResultsIndexItems(): Promise<ResultIndexItem[]> {
-  const resultsSource = (import.meta.env.VITE_RESULTS_SOURCE ?? 'static').toLowerCase();
-  if (resultsSource === 'cos') {
-    const prefix = import.meta.env.VITE_COS_PREFIX ?? '';
-    const cosItems = await listRaceJsonObjects(prefix);
-    return mapCosObjectsToResultIndex(cosItems);
-  }
-  return fetchResultsIndex();
-}
-
-/**
- * 按上传文件名（source_file_name）的 basename，大小写不敏感匹配索引项的 id。
- * 匹配逻辑：取 dataPath ?? csvPath，去掉路径前缀取 basename（decodeURIComponent），
- * 与 sourceFileName 的 basename 做大小写不敏感相等比较。
- * 返回匹配到的 ResultIndexItem.id；无匹配则返回 null。
- */
-export function matchResultIndexIdBySourceFileName(
-  sourceFileName: string,
-  items: ResultIndexItem[]
-): string | null {
-  const srcBase = basenameNorm(sourceFileName);
-  if (!srcBase) return null;
-  for (const item of items) {
-    const path = item.dataPath ?? item.csvPath;
-    if (!path) continue;
-    if (basenameNorm(path) === srcBase) return item.id;
-  }
-  return null;
-}
-
-function basenameNorm(p: string): string {
-  const tail = p.replace(/\\/g, '/').split('/').pop() ?? '';
-  try {
-    return decodeURIComponent(tail).toLowerCase();
-  } catch {
-    return tail.toLowerCase();
-  }
-}
-
-/** 若 manualId 非空且在索引中存在，返回该 id；否则返回 null（不采用非法值）。 */
-export function resolveManualResultIndexId(manualId: string | undefined | null, items: ResultIndexItem[]): string | null {
-  const t = manualId?.trim();
-  if (!t) return null;
-  return items.some((i) => i.id === t) ? t : null;
-}
-
-/** 解析成绩 CSV（支持首行元信息、引号转义、空值） */
-export function parseResultCsv(text: string): ParsedResultCsv {
-  const normalized = stripUtf8Bom(text).replace(/\r\n?/g, '\n');
-  const lines = normalized.split('\n').filter((l) => l.trim().length > 0);
-  if (lines.length === 0) {
-    return { metadataLine: '', metadata: {}, headers: [], rows: [] };
-  }
-
-  let metadataLine = '';
-  let headerLineIndex = 0;
-  if (!lines[0].startsWith('排名,')) {
-    metadataLine = lines[0];
-    headerLineIndex = 1;
-  }
-  if (headerLineIndex >= lines.length) {
-    return { metadataLine, metadata: {}, headers: [], rows: [] };
-  }
-
-  const headers = parseCsvLine(lines[headerLineIndex]);
-  const rows = lines.slice(headerLineIndex + 1).map(parseCsvLine);
-
-  const metadata: { track?: string; session?: string } = {};
-  const metaMatch = /^赛道:\s*([^,]+),\s*会话:\s*(.+)$/.exec(metadataLine);
-  if (metaMatch) {
-    metadata.track = metaMatch[1].trim();
-    metadata.session = metaMatch[2].trim();
-  }
-
-  const normalizedRows = rows.map((r) => {
-    if (r.length >= headers.length) return r;
-    return [...r, ...Array.from({ length: headers.length - r.length }, () => '')];
-  });
-
-  return {
-    metadataLine,
-    metadata,
-    headers,
-    rows: normalizedRows,
-  };
-}
 
 /** 与单场成绩页一致：sessionType 代码 → 中文 */
 export function sessionTypeLabelCn(sessionType: string): string {
@@ -699,16 +447,4 @@ export function sessionTypeLabelCn(sessionType: string): string {
     default:
       return sessionType || '—';
   }
-}
-
-/** 车手详情「参赛记录」→ 复用 ResultList 所需的 ResultIndexItem（当前仓库内无引用，保留作扩展） */
-export function driverRaceHistoryToResultIndexItems(rows: DriverRaceHistory[]): ResultIndexItem[] {
-  return rows.map((r) => ({
-    id: String(r.race_id),
-    title: r.race_name,
-    track: r.track_name || '',
-    date: (r.race_date || '').slice(0, 10),
-    sessionType: '正赛',
-    csvPath: '',
-  }));
 }

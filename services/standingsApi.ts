@@ -72,6 +72,11 @@ export async function getLicensePointLogs(driverId: number): Promise<LicensePoin
     return parseJson<LicensePointLog[]>(res);
 }
 
+export async function getRaces(): Promise<RaceRow[]> {
+    const res = await fetch(apiUrl('/api/races'));
+    return parseJson<RaceRow[]>(res);
+}
+
 export async function getRaceById(id: number): Promise<RaceRow | null> {
     const res = await fetch(apiUrl(`/api/races/${id}`));
     if (res.status === 404) return null;
@@ -84,6 +89,78 @@ export async function getRaceResultsWithDrivers(
     const res = await fetch(apiUrl(`/api/races/${raceId}/results`));
     return parseJson(res);
 }
+
+// ── Admin token ────────────────────────────────────────────────────────────────
+
+const ADMIN_TOKEN_KEY = 'acc-admin-token';
+
+export function getAdminToken(): string | null {
+    try {
+        return sessionStorage.getItem(ADMIN_TOKEN_KEY);
+    } catch {
+        return null;
+    }
+}
+
+export function setAdminToken(token: string): void {
+    try {
+        sessionStorage.setItem(ADMIN_TOKEN_KEY, token);
+    } catch {
+        /* ignore */
+    }
+}
+
+export function clearAdminToken(): void {
+    try {
+        sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+    } catch {
+        /* ignore */
+    }
+}
+
+async function adminFetch(path: string, init?: RequestInit): Promise<Response> {
+    const token = getAdminToken();
+    const headers: Record<string, string> = {
+        ...(init?.headers as Record<string, string>),
+        'Content-Type': 'application/json',
+    };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const res = await fetch(apiUrl(path), { ...init, headers });
+    if (res.status === 401) {
+        clearAdminToken();
+        window.dispatchEvent(new Event('acc:admin-unauthorized'));
+    }
+    return res;
+}
+
+// ── Admin auth API ────────────────────────────────────────────────────────────
+
+export async function adminLogin(password: string): Promise<void> {
+    const res = await fetch(apiUrl('/api/admin/login'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+    });
+    if (!res.ok) throw new Error(await readError(res));
+    const data = (await res.json()) as { token: string };
+    setAdminToken(data.token);
+}
+
+export async function adminMe(): Promise<void> {
+    const res = await adminFetch('/api/admin/me');
+    if (!res.ok) throw new Error(await readError(res));
+}
+
+export async function adminLogout(): Promise<void> {
+    try {
+        const res = await adminFetch('/api/admin/logout', { method: 'POST' });
+        if (!res.ok) throw new Error(await readError(res));
+    } finally {
+        clearAdminToken();
+    }
+}
+
+// ── Admin write APIs ─────────────────────────────────────────────────────────
 
 export interface AdminImportRaceBody {
     sourceFileName: string;
@@ -98,18 +175,16 @@ export interface AdminImportRaceBody {
 export async function adminImportRace(
     body: AdminImportRaceBody
 ): Promise<{ raceId: number; newDrivers: number; updatedDrivers: number; resultCount: number }> {
-    const res = await fetch(apiUrl('/api/admin/import-race'), {
+    const res = await adminFetch('/api/admin/import-race', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
     });
     return parseJson(res);
 }
 
 export async function patchDriverTier(driverId: number, tier: string): Promise<{ ok: boolean }> {
-    const res = await fetch(apiUrl(`/api/drivers/${driverId}/tier`), {
+    const res = await adminFetch(`/api/drivers/${driverId}/tier`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tier }),
     });
     return parseJson<{ ok: boolean }>(res);
@@ -119,9 +194,8 @@ export async function postDriverLicenseChange(
     driverId: number,
     payload: { changeValue: number; reason: string; operator?: string }
 ): Promise<{ ok: boolean; after_points: number }> {
-    const res = await fetch(apiUrl(`/api/drivers/${driverId}/license`), {
+    const res = await adminFetch(`/api/drivers/${driverId}/license`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
     });
     return parseJson(res);

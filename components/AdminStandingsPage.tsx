@@ -4,12 +4,12 @@ import { VALID_DRIVER_TIERS, type DriverTier } from '../db/standingsTypes';
 import DriverTierBadge from './DriverTierBadge';
 import { getDrivers, adminImportRace, postDriverLicenseChange, patchDriverTier } from '../services/standingsApi';
 import {
-    parseJsonToResults, type AccSchema2,
+    parseJsonToResults, type AccSchema2, type ParsedDriverResult,
 } from '../utils/standingsImport';
 import { putRaceSessionSnapshot } from '../services/raceSessionSnapshot';
 import {
     Upload, Search, ChevronUp, ChevronDown, AlertCircle, CheckCircle2,
-    Plus, Minus,
+    Plus, Minus, Trash2, X,
 } from 'lucide-react';
 
 const SORT_OPTIONS: { value: SortField; label: string }[] = [
@@ -26,6 +26,16 @@ interface ImportFeedback {
     resultCount: number;
     message?: string;
 }
+
+interface PreviewMeta {
+    raceName: string;
+    trackName: string;
+    serverName: string;
+    raceDate: string;
+    sessionType: string;
+}
+
+type PreviewResultItem = ParsedDriverResult & { removed: boolean };
 
 interface Props {
     onOpenDriver: (id: number) => void;
@@ -49,6 +59,16 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
     const [importFeedback, setImportFeedback] = useState<ImportFeedback | null>(null);
     const [importLoading, setImportLoading] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // ── Preview state ──
+    const [previewOpen, setPreviewOpen] = useState(false);
+    const [previewFileName, setPreviewFileName] = useState('');
+    const [previewRawText, setPreviewRawText] = useState('');
+    const [previewMeta, setPreviewMeta] = useState<PreviewMeta>({
+        raceName: '', trackName: '', serverName: '', raceDate: '', sessionType: 'R',
+    });
+    const [previewResults, setPreviewResults] = useState<PreviewResultItem[]>([]);
+    const [previewError, setPreviewError] = useState<string | null>(null);
 
     const [drivers, setDrivers] = useState<DriverStanding[]>([]);
     const [driversLoading, setDriversLoading] = useState(true);
@@ -88,6 +108,25 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
             : <ChevronUp className="w-4 h-4 ml-1 inline" />;
     };
 
+    function formatMsToTime(ms: number): string {
+        if (ms <= 0) return '-';
+        const totalSeconds = Math.floor(ms / 1000);
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        return `${minutes}:${String(seconds).padStart(2, '0')}`;
+    }
+
+    function formatMsToLap(ms: number): string {
+        if (ms <= 0) return '-';
+        const totalSeconds = ms / 1000;
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = (totalSeconds % 60).toFixed(3);
+        if (minutes > 0) {
+            return `${minutes}:${String(seconds).padStart(6, '0')}`;
+        }
+        return `${seconds}s`;
+    }
+
     // ── Import handler ──
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -113,31 +152,18 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
             const parsed = parseJsonToResults(data);
             parsed.sourceFileName = file.name;
 
-            const { raceId, newDrivers, updatedDrivers, resultCount } = await adminImportRace({
-                sourceFileName: file.name,
+            setPreviewFileName(file.name);
+            setPreviewRawText(text);
+            setPreviewMeta({
                 raceName: parsed.raceName,
                 trackName: parsed.trackName,
                 serverName: parsed.serverName,
                 raceDate: parsed.raceDate,
                 sessionType: parsed.sessionType,
-                results: parsed.results,
             });
-
-            try {
-                await putRaceSessionSnapshot(raceId, text);
-            } catch (e) {
-                console.warn('race session snapshot (IDB) failed:', e);
-            }
-
-            void loadDrivers();
-
-            setImportFeedback({
-                type: 'success',
-                raceName: parsed.raceName,
-                newDrivers,
-                updatedDrivers,
-                resultCount,
-            });
+            setPreviewResults(parsed.results.map(r => ({ ...r, removed: false })));
+            setPreviewOpen(true);
+            setPreviewError(null);
         } catch (err) {
             setImportFeedback({
                 type: 'error',
@@ -151,6 +177,62 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
             setImportLoading(false);
             if (fileInputRef.current) fileInputRef.current.value = '';
         }
+    };
+
+    const handleConfirmImport = async () => {
+        if (previewResults.filter(r => !r.removed).length === 0) {
+            setPreviewError('车手列表为空，请至少保留一条记录');
+            return;
+        }
+
+        setImportLoading(true);
+        setPreviewError(null);
+
+        try {
+            const body = {
+                sourceFileName: previewFileName,
+                raceName: previewMeta.raceName,
+                trackName: previewMeta.trackName,
+                serverName: previewMeta.serverName,
+                raceDate: previewMeta.raceDate,
+                sessionType: previewMeta.sessionType,
+                results: previewResults
+                    .filter(r => !r.removed)
+                    .map(({ removed: _removed, ...rest }) => rest),
+            };
+
+            const { raceId, newDrivers, updatedDrivers, resultCount } = await adminImportRace(body);
+
+            try {
+                await putRaceSessionSnapshot(raceId, previewRawText);
+            } catch (e) {
+                console.warn('race session snapshot (IDB) failed:', e);
+            }
+
+            void loadDrivers();
+
+            setImportFeedback({
+                type: 'success',
+                raceName: previewMeta.raceName,
+                newDrivers,
+                updatedDrivers,
+                resultCount,
+            });
+            setPreviewOpen(false);
+        } catch (err) {
+            setPreviewError(err instanceof Error ? err.message : String(err));
+        } finally {
+            setImportLoading(false);
+        }
+    };
+
+    const handleCancelPreview = () => {
+        setPreviewOpen(false);
+        setPreviewFileName('');
+        setPreviewRawText('');
+        setPreviewMeta({ raceName: '', trackName: '', serverName: '', raceDate: '', sessionType: 'R' });
+        setPreviewResults([]);
+        setPreviewError(null);
     };
 
     // ── License point modal ──
@@ -456,6 +538,173 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
                                 className="flex-1 px-4 py-2.5 rounded-lg bg-red-700 hover:bg-red-600 text-white text-sm font-semibold transition-colors disabled:opacity-50"
                             >
                                 {licenseSubmitting ? '提交中...' : '确认提交'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Import preview modal */}
+            {previewOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-black/70" onClick={handleCancelPreview} />
+                    <div className="relative bg-slate-800 border border-slate-600 rounded-xl p-6 w-full max-w-5xl max-h-[90vh] overflow-y-auto shadow-2xl">
+                        {/* Header */}
+                        <div className="flex items-center justify-between mb-5">
+                            <div>
+                                <h3 className="text-lg font-bold text-white">预览导入</h3>
+                                <p className="text-sm text-slate-400 mt-0.5">{previewFileName}</p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={handleCancelPreview}
+                                className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        {/* Meta fields */}
+                        <div className="grid grid-cols-2 gap-4 mb-6">
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-1.5">比赛名称</label>
+                                <input
+                                    type="text"
+                                    value={previewMeta.raceName}
+                                    onChange={e => setPreviewMeta(m => ({ ...m, raceName: e.target.value }))}
+                                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-red-500"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-1.5">赛道</label>
+                                <input
+                                    type="text"
+                                    value={previewMeta.trackName}
+                                    onChange={e => setPreviewMeta(m => ({ ...m, trackName: e.target.value }))}
+                                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-red-500"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-1.5">服务器</label>
+                                <input
+                                    type="text"
+                                    value={previewMeta.serverName}
+                                    onChange={e => setPreviewMeta(m => ({ ...m, serverName: e.target.value }))}
+                                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-red-500"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-1.5">比赛日期</label>
+                                <input
+                                    type="text"
+                                    value={previewMeta.raceDate}
+                                    onChange={e => setPreviewMeta(m => ({ ...m, raceDate: e.target.value }))}
+                                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-red-500"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-1.5">Session 类型</label>
+                                <select
+                                    value={previewMeta.sessionType}
+                                    onChange={e => setPreviewMeta(m => ({ ...m, sessionType: e.target.value }))}
+                                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-red-500 cursor-pointer"
+                                >
+                                    <option value="R">R - 正赛</option>
+                                    <option value="Q">Q - 排位</option>
+                                    <option value="P">P - 练习</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        {/* Results table */}
+                        <div className="mb-4 flex items-center gap-3 text-sm">
+                            <span className="text-emerald-400 font-medium">
+                                将导入 {previewResults.filter(r => !r.removed).length} 条
+                            </span>
+                            <span className="text-red-400 font-medium">
+                                已移除 {previewResults.filter(r => r.removed).length} 条
+                            </span>
+                            <span className="text-slate-500">
+                                共 {previewResults.length} 条
+                            </span>
+                        </div>
+
+                        <div className="bg-slate-900 border border-slate-700 rounded-lg overflow-hidden mb-6">
+                            <div className="overflow-x-auto max-h-80 overflow-y-auto">
+                                <table className="w-full min-w-[900px] text-sm">
+                                    <thead className="stick top-0 bg-slate-800 text-slate-400 text-xs uppercase">
+                                        <tr>
+                                            <th className="p-2.5 text-left w-12">#</th>
+                                            <th className="p-2.5 text-left">车手</th>
+                                            <th className="p-2.5 text-left">SteamID</th>
+                                            <th className="p-2.5 text-right">圈数</th>
+                                            <th className="p-2.5 text-right">总时间</th>
+                                            <th className="p-2.5 text-right">最快圈</th>
+                                            <th className="p-2.5 text-right">积分</th>
+                                            <th className="p-2.5 text-center">操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-700/60">
+                                        {previewResults.map((r, idx) => (
+                                            <tr
+                                                key={idx}
+                                                className={`transition-opacity ${r.removed ? 'opacity-40' : 'hover:bg-slate-700/40'}`}
+                                            >
+                                                <td className="p-2.5 text-slate-400 font-mono text-xs">{idx + 1}</td>
+                                                <td className="p-2.5 text-slate-100">{r.driverName}</td>
+                                                <td className="p-2.5 text-slate-400 font-mono text-xs">{r.steamId || '-'}</td>
+                                                <td className="p-2.5 text-right text-slate-300">{r.laps}</td>
+                                                <td className="p-2.5 text-right text-slate-300">{formatMsToTime(r.totalTime)}</td>
+                                                <td className="p-2.5 text-right text-slate-300">{formatMsToLap(r.bestLap)}</td>
+                                                <td className="p-2.5 text-right text-amber-400 font-semibold">{r.points}</td>
+                                                <td className="p-2.5 text-center">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            const updated = [...previewResults];
+                                                            updated[idx] = { ...updated[idx], removed: !updated[idx].removed };
+                                                            setPreviewResults(updated);
+                                                        }}
+                                                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                                                            r.removed
+                                                                ? 'border-emerald-700 text-emerald-400 hover:bg-emerald-950/40'
+                                                                : 'border-red-700 text-red-400 hover:bg-red-950/40'
+                                                        }`}
+                                                    >
+                                                        <Trash2 className="w-3.5 h-3.5" />
+                                                        {r.removed ? '恢复' : '移除'}
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        {previewError && (
+                            <div className="flex items-center gap-2 text-sm text-red-400 mb-4">
+                                <AlertCircle className="w-4 h-4" />
+                                {previewError}
+                            </div>
+                        )}
+
+                        {/* Footer */}
+                        <div className="flex gap-3">
+                            <button
+                                type="button"
+                                onClick={handleCancelPreview}
+                                className="flex-1 px-4 py-2.5 rounded-lg bg-slate-700 border border-slate-600 text-slate-200 text-sm font-medium hover:bg-slate-600 transition-colors"
+                            >
+                                取消
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleConfirmImport}
+                                disabled={importLoading || previewResults.filter(r => !r.removed).length === 0}
+                                className="flex-1 px-4 py-2.5 rounded-lg bg-green-700 hover:bg-green-600 text-white text-sm font-semibold transition-colors disabled:opacity-50"
+                            >
+                                {importLoading ? '导入中...' : '确认导入'}
                             </button>
                         </div>
                     </div>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
     LeaderboardLine,
     CAR_MODELS,
@@ -13,7 +13,6 @@ import {
     carClassBadgeClass,
     sumJsonTimePenaltyMs,
     formatPenaltyDelta,
-    getCarSessionPenaltyBadgeLabels,
     carHasNonDsqJsonPenalties,
     sortLeaderboardLinesForDisplay,
     hasAnyManualPenaltyMs,
@@ -74,7 +73,6 @@ const Leaderboard: React.FC<LeaderboardProps> = ({
         isRace && anyManual && leaderLine && !isDisqualified(leaderLine.car.carId)
             ? getRaceAdjustedFinishMs(leaderLine, penalties, manualPenaltyMsByCarId)
             : null;
-    const [hoverCarId, setHoverCarId] = useState<number | null>(null);
 
     return (
         <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden shadow-2xl">
@@ -201,17 +199,12 @@ const Leaderboard: React.FC<LeaderboardProps> = ({
                                 isRace &&
                                 totalTimeRaw &&
                                 totalTimeRaw !== 2147483647;
-                            const penaltyBadges = getCarSessionPenaltyBadgeLabels(cid, penalties);
-                            const showBadgesInRank =
-                                penaltyBadges.length > 0 && (isSelected || hoverCarId === cid);
                             const highlightNumber = carHasNonDsqJsonPenalties(cid, penalties);
 
                             return (
                                 <tr
                                     key={line.car.carId}
                                     onClick={() => onSelectDriver(line.car.carId)}
-                                    onMouseEnter={() => setHoverCarId(cid)}
-                                    onMouseLeave={() => setHoverCarId(null)}
                                     className={`
                                         cursor-pointer transition-colors hover:bg-slate-700/50
                                         ${isSelected ? 'bg-slate-700 border-l-4 border-red-500' : 'border-l-4 border-transparent'}
@@ -220,24 +213,7 @@ const Leaderboard: React.FC<LeaderboardProps> = ({
                                 >
                                     <td className="p-3 text-center font-bold text-slate-300 align-middle min-w-[4.5rem]">
                                         {dsq ? (
-                                            <div className="flex flex-col items-center gap-1">
-                                                <span className="text-red-400 text-xs font-mono">DSQ</span>
-                                                {showBadgesInRank ? (
-                                                    <span
-                                                        className="text-[10px] font-mono font-semibold text-yellow-400 leading-tight max-w-[5rem] break-words"
-                                                        title={penaltyBadges.join(' · ')}
-                                                    >
-                                                        {penaltyBadges.join(' · ')}
-                                                    </span>
-                                                ) : null}
-                                            </div>
-                                        ) : showBadgesInRank ? (
-                                            <span
-                                                className="text-[11px] font-mono font-semibold text-yellow-400 leading-snug block max-w-[5.5rem] mx-auto break-words"
-                                                title={penaltyBadges.join(' · ')}
-                                            >
-                                                {penaltyBadges.join(' · ')}
-                                            </span>
+                                            <span className="text-red-400 text-xs font-mono">DSQ</span>
                                         ) : isWinner ? (
                                             <Crown className="w-4 h-4 text-yellow-500 mx-auto" />
                                         ) : (
