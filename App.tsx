@@ -175,7 +175,7 @@ const App: React.FC = () => {
                                 onBack={() => {
                                     window.location.hash = '/drivers';
                                 }}
-                                onOpenRace={() => {}}
+                                onOpenRace={openRace}
                             />
                         )}
                         {sqliteReady && route.type === 'race' && (

@@ -106,10 +106,10 @@ function buildCarIdToSteamIdMap(data: AccSchema2): Map<number, string> {
 }
 
 export function parseRaceDate(exportedAt?: string): string {
-    if (!exportedAt) return new Date().toISOString().slice(0, 19).replace('T', ' ');
+    if (!exportedAt) return new Date().toISOString().slice(0, 10);
     const d = new Date(exportedAt);
-    if (Number.isNaN(d.getTime())) return exportedAt;
-    return d.toISOString().slice(0, 19).replace('T', ' ');
+    if (Number.isNaN(d.getTime())) return exportedAt.slice(0, 10);
+    return d.toISOString().slice(0, 10);
 }
 
 export function parseRaceName(serverName: string, trackName: string, sessionType: string): string {
