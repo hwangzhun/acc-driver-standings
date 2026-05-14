@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import type { DriverStanding, SortField } from '../db/standingsTypes';
 import { VALID_DRIVER_TIERS, type DriverTier } from '../db/standingsTypes';
 import DriverTierBadge from './DriverTierBadge';
@@ -31,7 +31,9 @@ interface PreviewMeta {
     raceName: string;
     trackName: string;
     serverName: string;
-    raceDate: string;
+    raceYear: string;
+    raceMonth: string;
+    raceDay: string;
     sessionType: string;
 }
 
@@ -65,10 +67,26 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
     const [previewFileName, setPreviewFileName] = useState('');
     const [previewRawText, setPreviewRawText] = useState('');
     const [previewMeta, setPreviewMeta] = useState<PreviewMeta>({
-        raceName: '', trackName: '', serverName: '', raceDate: '', sessionType: 'R',
+        raceName: '', trackName: '', serverName: '', raceYear: '', raceMonth: '', raceDay: '', sessionType: 'R',
     });
     const [previewResults, setPreviewResults] = useState<PreviewResultItem[]>([]);
     const [previewError, setPreviewError] = useState<string | null>(null);
+
+    const { duplicateNames, duplicateSteamIds } = useMemo(() => {
+        const nameCount = new Map<string, number>();
+        const sidCount = new Map<string, number>();
+        for (const r of previewResults) {
+            if (r.removed) continue;
+            const name = r.driverName?.trim();
+            if (name) nameCount.set(name, (nameCount.get(name) ?? 0) + 1);
+            const sid = r.steamId?.trim();
+            if (sid) sidCount.set(sid, (sidCount.get(sid) ?? 0) + 1);
+        }
+        const dn = new Set<string>(), ds = new Set<string>();
+        nameCount.forEach((v, k) => { if (v > 1) dn.add(k); });
+        sidCount.forEach((v, k) => { if (v > 1) ds.add(k); });
+        return { duplicateNames: dn, duplicateSteamIds: ds };
+    }, [previewResults]);
 
     const [drivers, setDrivers] = useState<DriverStanding[]>([]);
     const [driversLoading, setDriversLoading] = useState(true);
@@ -154,14 +172,18 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
 
             setPreviewFileName(file.name);
             setPreviewRawText(text);
+            const datePart = parsed.raceDate.slice(0, 10);
+            const [y, m, d] = datePart.split('-');
             setPreviewMeta({
                 raceName: parsed.raceName,
                 trackName: parsed.trackName,
                 serverName: parsed.serverName,
-                raceDate: parsed.raceDate,
+                raceYear: y ?? '',
+                raceMonth: String(Number(m) || ''),
+                raceDay: String(Number(d) || ''),
                 sessionType: parsed.sessionType,
             });
-            setPreviewResults(parsed.results.map(r => ({ ...r, removed: false })));
+            setPreviewResults(parsed.results.map(r => ({ ...r, removed: r.laps === 0 })));
             setPreviewOpen(true);
             setPreviewError(null);
         } catch (err) {
@@ -189,12 +211,21 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
         setPreviewError(null);
 
         try {
+            const raceDate = previewMeta.raceYear && previewMeta.raceMonth && previewMeta.raceDay
+                ? `${previewMeta.raceYear}-${previewMeta.raceMonth.padStart(2, '0')}-${previewMeta.raceDay.padStart(2, '0')}`
+                : '';
+            if (!raceDate) {
+                setPreviewError('请完整填写比赛日期');
+                setImportLoading(false);
+                return;
+            }
+
             const body = {
                 sourceFileName: previewFileName,
                 raceName: previewMeta.raceName,
                 trackName: previewMeta.trackName,
                 serverName: previewMeta.serverName,
-                raceDate: previewMeta.raceDate,
+                raceDate,
                 sessionType: previewMeta.sessionType,
                 results: previewResults
                     .filter(r => !r.removed)
@@ -230,7 +261,7 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
         setPreviewOpen(false);
         setPreviewFileName('');
         setPreviewRawText('');
-        setPreviewMeta({ raceName: '', trackName: '', serverName: '', raceDate: '', sessionType: 'R' });
+        setPreviewMeta({ raceName: '', trackName: '', serverName: '', raceYear: '', raceMonth: '', raceDay: '', sessionType: 'R' });
         setPreviewResults([]);
         setPreviewError(null);
     };
@@ -593,14 +624,36 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
                                     className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-red-500"
                                 />
                             </div>
-                            <div>
+                            <div className="col-span-2">
                                 <label className="block text-xs text-slate-400 mb-1.5">比赛日期</label>
-                                <input
-                                    type="text"
-                                    value={previewMeta.raceDate}
-                                    onChange={e => setPreviewMeta(m => ({ ...m, raceDate: e.target.value }))}
-                                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-red-500"
-                                />
+                                <div className="flex items-center gap-2">
+                                    <select
+                                        value={previewMeta.raceYear}
+                                        onChange={e => setPreviewMeta(m => ({ ...m, raceYear: e.target.value }))}
+                                        className="w-28 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-red-500 cursor-pointer"
+                                    >
+                                        <option value="">年</option>
+                                        {[2024, 2025, 2026, 2027, 2028].map(y => <option key={y} value={y}>{y}</option>)}
+                                    </select>
+                                    <span className="text-slate-500">-</span>
+                                    <select
+                                        value={previewMeta.raceMonth}
+                                        onChange={e => setPreviewMeta(m => ({ ...m, raceMonth: e.target.value }))}
+                                        className="w-20 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-red-500 cursor-pointer"
+                                    >
+                                        <option value="">月</option>
+                                        {Array.from({ length: 12 }, (_, i) => <option key={i + 1} value={String(i + 1)}>{i + 1}</option>)}
+                                    </select>
+                                    <span className="text-slate-500">-</span>
+                                    <select
+                                        value={previewMeta.raceDay}
+                                        onChange={e => setPreviewMeta(m => ({ ...m, raceDay: e.target.value }))}
+                                        className="w-20 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-red-500 cursor-pointer"
+                                    >
+                                        <option value="">日</option>
+                                        {Array.from({ length: 31 }, (_, i) => <option key={i + 1} value={String(i + 1)}>{i + 1}</option>)}
+                                    </select>
+                                </div>
                             </div>
                             <div>
                                 <label className="block text-xs text-slate-400 mb-1.5">Session 类型</label>
@@ -629,6 +682,20 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
                             </span>
                         </div>
 
+                        {(duplicateNames.size > 0 || duplicateSteamIds.size > 0) && (
+                            <div className="mb-4 flex items-start gap-2 px-3 py-2 rounded-lg
+                                bg-amber-950/40 border border-amber-800 text-amber-200 text-sm">
+                                <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-amber-400" />
+                                <div>
+                                    检测到
+                                    {duplicateNames.size > 0 && <> <b>{duplicateNames.size}</b> 个重复车手名称</>}
+                                    {duplicateNames.size > 0 && duplicateSteamIds.size > 0 && '、'}
+                                    {duplicateSteamIds.size > 0 && <> <b>{duplicateSteamIds.size}</b> 个重复 SteamID</>}
+                                    ，请确认是否需要移除重复条目。
+                                </div>
+                            </div>
+                        )}
+
                         <div className="bg-slate-900 border border-slate-700 rounded-lg overflow-hidden mb-6">
                             <div className="overflow-x-auto max-h-80 overflow-y-auto">
                                 <table className="w-full min-w-[900px] text-sm">
@@ -645,14 +712,23 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-700/60">
-                                        {previewResults.map((r, idx) => (
+                                        {previewResults.map((r, idx) => {
+                                            const nameDup = !r.removed && duplicateNames.has(r.driverName?.trim() ?? '');
+                                            const sidDup = !r.removed && !!r.steamId?.trim() && duplicateSteamIds.has(r.steamId.trim());
+                                            return (
                                             <tr
                                                 key={idx}
-                                                className={`transition-opacity ${r.removed ? 'opacity-40' : 'hover:bg-slate-700/40'}`}
+                                                className={`transition-opacity ${r.removed ? 'opacity-40' : 'hover:bg-slate-700/40'} ${(nameDup || sidDup) && !r.removed ? 'bg-amber-950/30' : ''}`}
                                             >
                                                 <td className="p-2.5 text-slate-400 font-mono text-xs">{idx + 1}</td>
-                                                <td className="p-2.5 text-slate-100">{r.driverName}</td>
-                                                <td className="p-2.5 text-slate-400 font-mono text-xs">{r.steamId || '-'}</td>
+                                                <td className={`p-2.5 ${nameDup ? 'text-amber-300' : 'text-slate-100'}`}>
+                                                    {r.driverName}
+                                                    {nameDup && <AlertCircle className="w-3.5 h-3.5 inline ml-1.5 text-amber-400 align-middle" title="列表中存在重复名称" />}
+                                                </td>
+                                                <td className={`p-2.5 font-mono text-xs ${sidDup ? 'text-amber-300' : 'text-slate-400'}`}>
+                                                    {r.steamId || '-'}
+                                                    {sidDup && <AlertCircle className="w-3.5 h-3.5 inline ml-1.5 text-amber-400 align-middle" title="列表中存在重复 SteamID" />}
+                                                </td>
                                                 <td className="p-2.5 text-right text-slate-300">{r.laps}</td>
                                                 <td className="p-2.5 text-right text-slate-300">{formatMsToTime(r.totalTime)}</td>
                                                 <td className="p-2.5 text-right text-slate-300">{formatMsToLap(r.bestLap)}</td>
@@ -676,7 +752,8 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
                                                     </button>
                                                 </td>
                                             </tr>
-                                        ))}
+                                            );
+                                        })}
                                     </tbody>
                                 </table>
                             </div>

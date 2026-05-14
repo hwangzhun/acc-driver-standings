@@ -384,6 +384,12 @@ app.post('/api/admin/import-race', requireAdmin, (req: Request, res: Response) =
         let raceId: number;
         if (existing) {
             raceId = existing.id;
+            db.prepare(
+                `UPDATE races
+                    SET race_name = ?, track_name = ?, server_name = ?,
+                        race_date = ?, session_type = ?
+                  WHERE id = ?`
+            ).run(raceName, trackName, serverName, raceDate, sessionType, raceId);
             db.prepare('DELETE FROM race_results WHERE race_id = ?').run(raceId);
         } else {
             db.prepare(
