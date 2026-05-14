@@ -112,3 +112,8 @@ export interface ImportResult {
     updatedDrivers: number;
     resultCount: number;
 }
+
+export interface AppSettings {
+    usePoints: boolean;
+    positionPointsMap: Record<number, number>;
+}

@@ -3,7 +3,7 @@ import Header from '../components/Header';
 import AdminStandingsPage from '../components/AdminStandingsPage';
 import DbDriverDetailPage from '../components/DbDriverDetailPage';
 import DbRaceDetailPage from '../components/DbRaceDetailPage';
-import { adminMe, adminLogout, clearAdminToken } from '../services/standingsApi';
+import { adminMe, adminLogout, clearAdminToken, getAppSettings } from '../services/standingsApi';
 import { LogOut } from 'lucide-react';
 import LoginPage from './LoginPage';
 
@@ -29,6 +29,8 @@ const AdminApp: React.FC = () => {
   const [authChecked, setAuthChecked] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
   const [route, setRoute] = useState<AdminRoute>(() => parseRoute());
+  const [usePoints, setUsePoints] = useState(false);
+  const [positionPointsMap, setPositionPointsMap] = useState<Record<number, number>>({});
 
   useEffect(() => {
     const sync = () => setRoute(parseRoute());
@@ -42,6 +44,13 @@ const AdminApp: React.FC = () => {
       try {
         await adminMe();
         setAuthenticated(true);
+        try {
+          const s = await getAppSettings();
+          setUsePoints(s.usePoints);
+          setPositionPointsMap(s.positionPointsMap);
+        } catch {
+          /* ignore */
+        }
       } catch {
         clearAdminToken();
         setAuthenticated(false);
@@ -127,12 +136,19 @@ const AdminApp: React.FC = () => {
 
       <main className="flex-grow p-4 md:p-6 max-w-[1800px] mx-auto w-full space-y-6">
         {route.type === 'home' && (
-          <AdminStandingsPage onOpenDriver={openDriver} />
+          <AdminStandingsPage
+            onOpenDriver={openDriver}
+            usePoints={usePoints}
+            onUsePointsChange={setUsePoints}
+            positionPointsMap={positionPointsMap}
+            onPositionPointsMapChange={setPositionPointsMap}
+          />
         )}
         {route.type === 'driver' && (
           <DbDriverDetailPage
             driverId={route.id}
             showSteamId
+            usePoints={usePoints}
             allowTierEdit
             onTierChange={(tier) => { void tier; }}
             onBack={() => { window.location.hash = '/'; }}
@@ -143,6 +159,7 @@ const AdminApp: React.FC = () => {
           <DbRaceDetailPage
             raceId={route.id}
             showSteamId
+            usePoints={usePoints}
             onBack={() => { window.location.hash = '/'; }}
           />
         )}

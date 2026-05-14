@@ -6,7 +6,7 @@ import DbDriverDetailPage from './components/DbDriverDetailPage';
 import DbRaceDetailPage from './components/DbRaceDetailPage';
 import type { ResultIndexItem } from './types';
 import { sessionTypeLabelCn } from './utils';
-import { initStandingsApi, getRaces } from './services/standingsApi';
+import { initStandingsApi, getRaces, getAppSettings } from './services/standingsApi';
 
 export type AppRoute =
     | { type: 'home' }
@@ -52,6 +52,7 @@ const App: React.FC = () => {
     const [racesError, setRacesError] = useState<string | null>(null);
     const [sqliteReady, setSqliteReady] = useState(false);
     const [sqliteError, setSqliteError] = useState<string | null>(null);
+    const [usePoints, setUsePoints] = useState(false);
 
     useEffect(() => {
         const sync = () => setRoute(parseRoute());
@@ -62,9 +63,15 @@ const App: React.FC = () => {
 
     useEffect(() => {
         void initStandingsApi()
-            .then(() => {
+            .then(async () => {
                 setSqliteReady(true);
                 setSqliteError(null);
+                try {
+                    const s = await getAppSettings();
+                    setUsePoints(s.usePoints);
+                } catch {
+                    /* ignore */
+                }
             })
             .catch((err) => {
                 const msg = err instanceof Error ? err.message : String(err);
@@ -158,12 +165,13 @@ const App: React.FC = () => {
                             </div>
                         )}
                         {sqliteReady && route.type === 'drivers' && (
-                            <DriverStandingsPage onOpenDriver={openDriverPublic} />
+                            <DriverStandingsPage onOpenDriver={openDriverPublic} usePoints={usePoints} />
                         )}
                         {sqliteReady && route.type === 'driver' && (
                             <DbDriverDetailPage
                                 driverId={route.id}
                                 showSteamId={false}
+                                usePoints={usePoints}
                                 onBack={() => {
                                     window.location.hash = '/drivers';
                                 }}
@@ -174,6 +182,7 @@ const App: React.FC = () => {
                             <DbRaceDetailPage
                                 raceId={route.id}
                                 showSteamId={false}
+                                usePoints={usePoints}
                                 onBack={raceDetailBack}
                             />
                         )}

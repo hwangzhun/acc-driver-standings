@@ -60,4 +60,9 @@ CREATE INDEX IF NOT EXISTS idx_race_results_race ON race_results(race_id);
 CREATE INDEX IF NOT EXISTS idx_race_results_driver ON race_results(driver_id);
 CREATE INDEX IF NOT EXISTS idx_license_logs_driver ON license_point_logs(driver_id);
 CREATE INDEX IF NOT EXISTS idx_drivers_steam ON drivers(steam_id);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 `;

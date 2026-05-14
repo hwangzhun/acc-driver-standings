@@ -7,6 +7,7 @@ import type {
     RaceResultRow,
     SortField,
     SortOrder,
+    AppSettings,
 } from '../db/standingsTypes';
 import type { ParsedDriverResult } from '../utils/standingsImport';
 
@@ -40,6 +41,11 @@ async function parseJson<T>(res: Response): Promise<T> {
 export async function initStandingsApi(): Promise<void> {
     const res = await fetch(apiUrl('/api/health'));
     if (!res.ok) throw new Error(await readError(res));
+}
+
+export async function getAppSettings(): Promise<AppSettings> {
+    const res = await fetch(apiUrl('/api/settings'));
+    return parseJson<AppSettings>(res);
 }
 
 export async function getDrivers(
@@ -197,6 +203,24 @@ export async function postDriverLicenseChange(
     const res = await adminFetch(`/api/drivers/${driverId}/license`, {
         method: 'POST',
         body: JSON.stringify(payload),
+    });
+    return parseJson(res);
+}
+
+export async function updateAppSettings(s: { usePoints: boolean }): Promise<{ usePoints: boolean }> {
+    const res = await adminFetch('/api/admin/settings', {
+        method: 'PATCH',
+        body: JSON.stringify(s),
+    });
+    return parseJson(res);
+}
+
+export async function updatePositionPointsMap(
+    map: Record<number, number>
+): Promise<{ ok: boolean; positionPointsMap: Record<number, number>; recalculatedRaceResults: number }> {
+    const res = await adminFetch('/api/admin/position-points', {
+        method: 'PATCH',
+        body: JSON.stringify({ map }),
     });
     return parseJson(res);
 }

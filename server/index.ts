@@ -20,6 +20,33 @@ const SORT_FIELDS = new Set(['points', 'license_points', 'total_races']);
 type SortField = 'points' | 'license_points' | 'total_races';
 type SortOrder = 'asc' | 'desc';
 
+const DEFAULT_POSITION_POINTS: Record<number, number> = {
+    1: 25, 2: 18, 3: 15, 4: 12, 5: 10,
+    6: 8, 7: 6, 8: 4, 9: 2, 10: 1,
+};
+
+function readPositionPointsMap(): Record<number, number> {
+    const row = db.prepare("SELECT value FROM app_settings WHERE key = 'position_points_map'").get() as
+        | { value: string }
+        | undefined;
+    if (!row) return { ...DEFAULT_POSITION_POINTS };
+    try {
+        const parsed = JSON.parse(row.value) as unknown;
+        if (typeof parsed === 'object' && parsed !== null) {
+            const result: Record<number, number> = {};
+            for (const [k, v] of Object.entries(parsed)) {
+                const pos = Number(k);
+                const pts = Number(v);
+                if (Number.isFinite(pos) && pos >= 1 && Number.isFinite(pts)) {
+                    result[pos] = pts;
+                }
+            }
+            return result;
+        }
+    } catch { /* fall through */ }
+    return { ...DEFAULT_POSITION_POINTS };
+}
+
 // ── Admin auth ──────────────────────────────────────────────────────────────────
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? (() => {
@@ -65,6 +92,12 @@ function openDatabase(): Database {
     if (!tierCol.some((c) => c.name === 'tier')) {
         database.exec("ALTER TABLE drivers ADD COLUMN tier TEXT NOT NULL DEFAULT 'Rookie'");
     }
+
+    database.exec(STANDINGS_SCHEMA_SQL);
+    database.prepare("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('use_points', '1')").run();
+    database.prepare("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('position_points_map', ?)").run(
+        JSON.stringify(DEFAULT_POSITION_POINTS)
+    );
 
     return database;
 }
@@ -160,6 +193,68 @@ app.post('/api/admin/logout', requireAdmin, (req: Request, res: Response) => {
 
 app.get('/api/health', (_req: Request, res: Response) => {
     res.json({ ok: true, sqlite: SQLITE_PATH });
+});
+
+app.get('/api/settings', (_req: Request, res: Response) => {
+    const row = db.prepare("SELECT value FROM app_settings WHERE key = 'use_points'").get() as
+        | { value: string }
+        | undefined;
+    res.json({ usePoints: row?.value === '1', positionPointsMap: readPositionPointsMap() });
+});
+
+app.patch('/api/admin/settings', requireAdmin, (req: Request, res: Response) => {
+    const { usePoints } = req.body as { usePoints?: unknown };
+    if (typeof usePoints !== 'boolean') {
+        res.status(400).json({ error: 'usePoints must be a boolean' });
+        return;
+    }
+    db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('use_points', ?)").run(
+        usePoints ? '1' : '0'
+    );
+    res.json({ usePoints });
+});
+
+app.patch('/api/admin/position-points', requireAdmin, (req: Request, res: Response) => {
+    const { map } = req.body as { map?: unknown };
+    if (typeof map !== 'object' || map === null || Array.isArray(map)) {
+        res.status(400).json({ error: 'map must be an object' });
+        return;
+    }
+    const rawEntries = Object.entries(map as Record<string, unknown>);
+    const parsed: Record<number, number> = {};
+    for (const [k, v] of rawEntries) {
+        const pos = Number(k);
+        const pts = Number(v);
+        if (!Number.isFinite(pos) || pos < 1 || !Number.isInteger(pos)) {
+            res.status(400).json({ error: `Invalid position key: ${k}` });
+            return;
+        }
+        if (!Number.isFinite(pts)) {
+            res.status(400).json({ error: `Invalid points value for position ${pos}` });
+            return;
+        }
+        parsed[pos] = pts;
+    }
+
+    const jsonStr = JSON.stringify(parsed);
+    const tx = db.transaction(() => {
+        db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('position_points_map', ?)").run(jsonStr);
+        db.prepare('UPDATE race_results SET points = 0').run();
+        const countStmt = db.prepare('SELECT COUNT(*) as total FROM race_results').get() as { total: number };
+        for (const [pos, pts] of Object.entries(parsed)) {
+            db.prepare('UPDATE race_results SET points = ? WHERE position = ?').run(pts, Number(pos));
+        }
+        recalculateAllDriverStats();
+        return countStmt.total;
+    });
+
+    try {
+        const recalculatedRaceResults = tx();
+        res.json({ ok: true, positionPointsMap: parsed, recalculatedRaceResults });
+    } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        res.status(500).json({ error: msg });
+    }
 });
 
 app.get('/api/drivers', (req: Request, res: Response) => {

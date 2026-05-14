@@ -19,10 +19,11 @@ function formatTime(ms: number): string {
 interface Props {
     raceId: number;
     showSteamId: boolean;
+    usePoints: boolean;
     onBack: () => void;
 }
 
-const DbRaceDetailPage: React.FC<Props> = ({ raceId, showSteamId, onBack }) => {
+const DbRaceDetailPage: React.FC<Props> = ({ raceId, showSteamId, usePoints, onBack }) => {
     const [race, setRace] = useState<RaceRow | null | undefined>(undefined);
     const [results, setResults] = useState<Array<RaceResultRow & { driver_name: string; steam_id: string }>>([]);
     const [dbError, setDbError] = useState<string | null>(null);
@@ -185,13 +186,13 @@ const DbRaceDetailPage: React.FC<Props> = ({ raceId, showSteamId, onBack }) => {
                                 <th className="p-3 text-right">圈数</th>
                                 <th className="p-3 text-right">总用时</th>
                                 <th className="p-3 text-right">最快圈</th>
-                                <th className="p-3 text-right">积分</th>
+                                {usePoints && <th className="p-3 text-right">积分</th>}
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-700/60">
                             {results.length === 0 ? (
                                 <tr>
-                                    <td colSpan={showSteamId ? 7 : 6} className="p-8 text-center text-slate-400">
+                                    <td colSpan={showSteamId ? (usePoints ? 7 : 6) : (usePoints ? 6 : 5)} className="p-8 text-center text-slate-400">
                                         暂无数据
                                     </td>
                                 </tr>
@@ -210,7 +211,7 @@ const DbRaceDetailPage: React.FC<Props> = ({ raceId, showSteamId, onBack }) => {
                                         <td className="p-3 text-right text-slate-300 font-mono text-xs">
                                             {formatTime(r.best_lap)}
                                         </td>
-                                        <td className="p-3 text-right text-amber-400 font-semibold">{r.points}</td>
+                                        {usePoints && <td className="p-3 text-right text-amber-400 font-semibold">{r.points}</td>}
                                     </tr>
                                 ))
                             )}

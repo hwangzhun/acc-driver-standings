@@ -2,14 +2,14 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import type { DriverStanding, SortField } from '../db/standingsTypes';
 import { VALID_DRIVER_TIERS, type DriverTier } from '../db/standingsTypes';
 import DriverTierBadge from './DriverTierBadge';
-import { getDrivers, adminImportRace, postDriverLicenseChange, patchDriverTier } from '../services/standingsApi';
+import { getDrivers, adminImportRace, postDriverLicenseChange, patchDriverTier, getAppSettings, updateAppSettings, updatePositionPointsMap } from '../services/standingsApi';
 import {
     parseJsonToResults, type AccSchema2, type ParsedDriverResult,
 } from '../utils/standingsImport';
 import { putRaceSessionSnapshot } from '../services/raceSessionSnapshot';
 import {
     Upload, Search, ChevronUp, ChevronDown, AlertCircle, CheckCircle2,
-    Plus, Minus, Trash2, X,
+    Plus, Minus, Trash2, X, Settings,
 } from 'lucide-react';
 
 const SORT_OPTIONS: { value: SortField; label: string }[] = [
@@ -39,13 +39,123 @@ type PreviewResultItem = ParsedDriverResult & { removed: boolean };
 
 interface Props {
     onOpenDriver: (id: number) => void;
+    usePoints: boolean;
+    onUsePointsChange: (v: boolean) => void;
+    positionPointsMap: Record<number, number>;
+    onPositionPointsMapChange: (map: Record<number, number>) => void;
 }
 
-const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
+const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver, usePoints: externalUsePoints, onUsePointsChange, positionPointsMap, onPositionPointsMapChange }) => {
     // ── Driver list state ──
     const [sortField, setSortField] = useState<SortField>('points');
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
     const [search, setSearch] = useState('');
+
+    // ── Settings state ──
+    const [usePoints, setUsePoints] = useState(externalUsePoints);
+    const [settingsSaving, setSettingsSaving] = useState(false);
+
+    useEffect(() => {
+        setUsePoints(externalUsePoints);
+    }, [externalUsePoints]);
+
+    const handleUsePointsToggle = async () => {
+        const next = !usePoints;
+        setUsePoints(next);
+        setSettingsSaving(true);
+        try {
+            await updateAppSettings({ usePoints: next });
+            onUsePointsChange(next);
+        } catch {
+            setUsePoints(!next);
+        } finally {
+            setSettingsSaving(false);
+        }
+    };
+
+    // ── Position points editor state ──
+    type PointsRow = { position: number; points: number };
+    const DEFAULT_MAP: Record<number, number> = {
+        1: 25, 2: 18, 3: 15, 4: 12, 5: 10,
+        6: 8, 7: 6, 8: 4, 9: 2, 10: 1,
+    };
+
+    const [pointsRows, setPointsRows] = useState<PointsRow[]>(() => {
+        const entries = Object.entries(positionPointsMap).map(([p, pts]) => ({
+            position: Number(p),
+            points: Number(pts),
+        }));
+        entries.sort((a, b) => a.position - b.position);
+        return entries;
+    });
+    const [pointsSaving, setPointsSaving] = useState(false);
+    const [pointsError, setPointsError] = useState('');
+    const [pointsSuccess, setPointsSuccess] = useState('');
+
+    useEffect(() => {
+        const entries = Object.entries(positionPointsMap).map(([p, pts]) => ({
+            position: Number(p),
+            points: Number(pts),
+        }));
+        entries.sort((a, b) => a.position - b.position);
+        setPointsRows(entries);
+    }, [positionPointsMap]);
+
+    const addPointsRow = () => {
+        const used = new Set(pointsRows.map(r => r.position));
+        let next = 1;
+        while (used.has(next)) next++;
+        setPointsRows(prev => [...prev, { position: next, points: 0 }].sort((a, b) => a.position - b.position));
+    };
+
+    const removePointsRow = (pos: number) => {
+        setPointsRows(prev => prev.filter(r => r.position !== pos));
+    };
+
+    const updatePointsRow = (pos: number, field: 'position' | 'points', value: number) => {
+        setPointsRows(prev => prev.map(r => r.position === pos ? { ...r, [field]: value } : r));
+    };
+
+    const resetPointsRows = () => {
+        const entries = Object.entries(DEFAULT_MAP).map(([p, pts]) => ({
+            position: Number(p),
+            points: Number(pts),
+        }));
+        setPointsRows(entries);
+    };
+
+    const validatePointsRows = (): string => {
+        const posSeen = new Set<number>();
+        for (const r of pointsRows) {
+            if (!Number.isInteger(r.position) || r.position < 1) {
+                return `名次 ${r.position} 无效，必须是 >= 1 的整数`;
+            }
+            if (posSeen.has(r.position)) return `名次 ${r.position} 出现重复`;
+            posSeen.add(r.position);
+            if (!Number.isFinite(r.points)) return `名次 ${r.position} 的积分无效`;
+        }
+        return '';
+    };
+
+    const handleSavePointsMap = async () => {
+        const err = validatePointsRows();
+        if (err) { setPointsError(err); return; }
+        if (!window.confirm('将立即按新规则回算所有历史比赛积分，确认继续？')) return;
+        setPointsError('');
+        setPointsSuccess('');
+        setPointsSaving(true);
+        try {
+            const map: Record<number, number> = {};
+            for (const r of pointsRows) map[r.position] = r.points;
+            const result = await updatePositionPointsMap(map);
+            onPositionPointsMapChange(result.positionPointsMap);
+            setPointsSuccess(`已回算 ${result.recalculatedRaceResults} 条成绩`);
+        } catch (e) {
+            setPointsError(e instanceof Error ? e.message : String(e));
+        } finally {
+            setPointsSaving(false);
+        }
+    };
 
     // ── License modal state ──
     const [licenseDriver, setLicenseDriver] = useState<DriverStanding | null>(null);
@@ -96,10 +206,17 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
         if (sortField === field) {
             setSortOrder((o) => (o === 'desc' ? 'asc' : 'desc'));
         } else {
+            if (field === 'points' && !usePoints) return;
             setSortField(field);
             setSortOrder('desc');
         }
     };
+
+    const activeSortOptions = SORT_OPTIONS.filter(opt => opt.value !== 'points' || usePoints);
+
+    if (!usePoints && sortField === 'points') {
+        setSortField('license_points');
+    }
 
     const SortIcon = ({ field }: { field: SortField }) => {
         if (sortField !== field) return null;
@@ -149,7 +266,7 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
                 return;
             }
 
-            const parsed = parseJsonToResults(data);
+            const parsed = parseJsonToResults(data, positionPointsMap);
             parsed.sourceFileName = file.name;
 
             setPreviewFileName(file.name);
@@ -290,6 +407,129 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
 
     return (
         <div className="space-y-6">
+            {/* System Settings */}
+            <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <Settings className="w-5 h-5 text-slate-400" />
+                        <div>
+                            <h3 className="text-base font-semibold text-white">系统设置</h3>
+                            <p className="text-sm text-slate-400 mt-0.5">启用积分后，管理员可在导入时手动设置积分值</p>
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={handleUsePointsToggle}
+                        disabled={settingsSaving}
+                        className={`relative inline-flex h-7 w-14 items-center rounded-full transition-colors disabled:opacity-50 ${
+                            usePoints ? 'bg-green-600' : 'bg-slate-600'
+                        }`}
+                    >
+                        <span
+                            className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                                usePoints ? 'translate-x-8' : 'translate-x-1'
+                            }`}
+                        />
+                    </button>
+                </div>
+            </div>
+
+            {/* Position Points Config */}
+            <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
+                <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                        <Settings className="w-5 h-5 text-slate-400" />
+                        <div>
+                            <h3 className="text-base font-semibold text-white">名次积分设置</h3>
+                            <p className="text-sm text-slate-400 mt-0.5">配置每名次的积分值，保存后将回算所有历史成绩</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="mb-4">
+                    <table className="w-full text-sm">
+                        <thead>
+                            <tr className="text-slate-400 text-xs uppercase">
+                                <th className="p-2 text-left w-24">名次</th>
+                                <th className="p-2 text-left">积分</th>
+                                <th className="p-2 w-16"></th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-700/60">
+                            {pointsRows.map((row) => (
+                                <tr key={row.position}>
+                                    <td className="p-2">
+                                        <input
+                                            type="number"
+                                            min={1}
+                                            value={row.position}
+                                            onChange={(e) => updatePointsRow(row.position, 'position', Number(e.target.value))}
+                                            className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-red-500"
+                                        />
+                                    </td>
+                                    <td className="p-2">
+                                        <input
+                                            type="number"
+                                            value={row.points}
+                                            onChange={(e) => updatePointsRow(row.position, 'points', Number(e.target.value))}
+                                            className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-red-500"
+                                        />
+                                    </td>
+                                    <td className="p-2 text-center">
+                                        <button
+                                            type="button"
+                                            onClick={() => removePointsRow(row.position)}
+                                            className="p-1.5 rounded text-slate-400 hover:text-red-400 hover:bg-slate-700 transition-colors"
+                                        >
+                                            <Trash2 className="w-4 h-4" />
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div className="flex items-center gap-3">
+                    <button
+                        type="button"
+                        onClick={addPointsRow}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-700 border border-slate-600 text-slate-200 text-sm font-medium hover:bg-slate-600 hover:border-slate-500 transition-colors"
+                    >
+                        <Plus className="w-4 h-4" />
+                        新增名次
+                    </button>
+                    <button
+                        type="button"
+                        onClick={resetPointsRows}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-700 border border-slate-600 text-slate-200 text-sm font-medium hover:bg-slate-600 hover:border-slate-500 transition-colors"
+                    >
+                        重置为默认
+                    </button>
+                    <button
+                        type="button"
+                        onClick={handleSavePointsMap}
+                        disabled={pointsSaving}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-red-700 hover:bg-red-600 text-white text-sm font-semibold transition-colors disabled:opacity-50"
+                    >
+                        {pointsSaving ? '保存中...' : '保存并回算'}
+                    </button>
+                </div>
+
+                {pointsError && (
+                    <div className="flex items-center gap-2 text-sm text-red-400 mt-3">
+                        <AlertCircle className="w-4 h-4" />
+                        {pointsError}
+                    </div>
+                )}
+                {pointsSuccess && (
+                    <div className="flex items-center gap-2 text-sm text-emerald-400 mt-3">
+                        <CheckCircle2 className="w-4 h-4" />
+                        {pointsSuccess}
+                    </div>
+                )}
+            </div>
+
             {/* JSON Upload */}
             <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
                 <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
@@ -361,7 +601,7 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
                         />
                     </div>
                     <div className="flex gap-2">
-                        {SORT_OPTIONS.map((opt) => (
+                        {activeSortOptions.map((opt) => (
                             <button
                                 key={opt.value}
                                 type="button"
@@ -388,7 +628,7 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
                                     <th className="p-3 text-left">车手</th>
                                     <th className="p-3 text-left">SteamID</th>
                                     <th className="p-3 text-left">等级</th>
-                                    <th className="p-3 text-right">积分</th>
+                                    {usePoints && <th className="p-3 text-right">积分</th>}
                                     <th className="p-3 text-right">驾照分</th>
                                     <th className="p-3 text-right">场次</th>
                                     <th className="p-3 text-right">领奖台</th>
@@ -398,13 +638,13 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
                             <tbody className="divide-y divide-slate-700/60">
                                 {driversLoading ? (
                                     <tr>
-                                        <td colSpan={9} className="p-8 text-center text-slate-400">
+                                        <td colSpan={usePoints ? 9 : 8} className="p-8 text-center text-slate-400">
                                             加载中…
                                         </td>
                                     </tr>
                                 ) : drivers.length === 0 ? (
                                     <tr>
-                                        <td colSpan={9} className="p-8 text-center text-slate-400">
+                                        <td colSpan={usePoints ? 9 : 8} className="p-8 text-center text-slate-400">
                                             暂无数据
                                         </td>
                                     </tr>
@@ -422,7 +662,7 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
                                             <td className="p-3">
                                                 <DriverTierBadge tier={d.tier} />
                                             </td>
-                                            <td className="p-3 text-right text-amber-400 font-semibold">{d.points}</td>
+                                            {usePoints && <td className="p-3 text-right text-amber-400 font-semibold">{d.points}</td>}
                                             <td className="p-3 text-right">
                                                 <span className={`font-semibold ${d.license_points <= 6 ? 'text-orange-400' : 'text-emerald-400'}`}>
                                                     {d.license_points}
@@ -640,7 +880,7 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
                                             <th className="p-2.5 text-right">圈数</th>
                                             <th className="p-2.5 text-right">总时间</th>
                                             <th className="p-2.5 text-right">最快圈</th>
-                                            <th className="p-2.5 text-right">积分</th>
+                                            {usePoints && <th className="p-2.5 text-right">积分</th>}
                                             <th className="p-2.5 text-center">操作</th>
                                         </tr>
                                     </thead>
@@ -656,7 +896,22 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
                                                 <td className="p-2.5 text-right text-slate-300">{r.laps}</td>
                                                 <td className="p-2.5 text-right text-slate-300">{formatMsToTime(r.totalTime)}</td>
                                                 <td className="p-2.5 text-right text-slate-300">{formatMsToLap(r.bestLap)}</td>
-                                                <td className="p-2.5 text-right text-amber-400 font-semibold">{r.points}</td>
+                                                {usePoints ? (
+                                                    <td className="p-2.5 text-right">
+                                                        <input
+                                                            type="number"
+                                                            value={r.points}
+                                                            onChange={(e) => {
+                                                                const updated = [...previewResults];
+                                                                updated[idx] = { ...updated[idx], points: Number(e.target.value) };
+                                                                setPreviewResults(updated);
+                                                            }}
+                                                            className="w-20 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm text-amber-400 font-semibold text-right focus:outline-none focus:border-red-500"
+                                                        />
+                                                    </td>
+                                                ) : (
+                                                    <td className="p-2.5 text-right text-amber-400 font-semibold">{r.points}</td>
+                                                )}
                                                 <td className="p-2.5 text-center">
                                                     <button
                                                         type="button"

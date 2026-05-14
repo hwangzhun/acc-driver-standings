@@ -12,9 +12,10 @@ const SORT_OPTIONS: { value: SortField; label: string }[] = [
 
 interface Props {
     onOpenDriver: (id: number) => void;
+    usePoints: boolean;
 }
 
-const DriverStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
+const DriverStandingsPage: React.FC<Props> = ({ onOpenDriver, usePoints }) => {
     const [sortField, setSortField] = useState<SortField>('points');
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
     const [search, setSearch] = useState('');
@@ -41,6 +42,7 @@ const DriverStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
     }, [refresh]);
 
     const toggleSort = (field: SortField) => {
+        if (field === 'points' && !usePoints) return;
         if (sortField === field) {
             setSortOrder((o) => (o === 'desc' ? 'asc' : 'desc'));
         } else {
@@ -48,6 +50,14 @@ const DriverStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
             setSortOrder('desc');
         }
     };
+
+    const activeSortOptions = SORT_OPTIONS.filter(opt => opt.value !== 'points' || usePoints);
+
+    useEffect(() => {
+        if (!usePoints && sortField === 'points') {
+            setSortField('license_points');
+        }
+    }, [usePoints]);
 
     const SortIcon = ({ field }: { field: SortField }) => {
         if (sortField !== field) return null;
@@ -74,8 +84,8 @@ const DriverStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
                         className="w-full pl-10 pr-4 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-red-500"
                     />
                 </div>
-                <div className="flex gap-2">
-                    {SORT_OPTIONS.map((opt) => (
+                    <div className="flex gap-2">
+                        {activeSortOptions.map((opt) => (
                         <button
                             key={opt.value}
                             type="button"
@@ -97,11 +107,11 @@ const DriverStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
                 <div className="overflow-x-auto">
                     <table className="w-full min-w-[1000px] text-sm">
                         <thead>
-                            <tr className="bg-slate-900 text-slate-400 text-xs uppercase">
+                                <tr className="bg-slate-900 text-slate-400 text-xs uppercase">
                                 <th className="p-3 text-left w-12">#</th>
                                 <th className="p-3 text-left">车手</th>
                                 <th className="p-3 text-left">等级</th>
-                                <th className="p-3 text-right">积分</th>
+                                {usePoints && <th className="p-3 text-right">积分</th>}
                                 <th className="p-3 text-right">驾照分</th>
                                 <th className="p-3 text-right">场次</th>
                                 <th className="p-3 text-right">领奖台</th>
@@ -111,17 +121,17 @@ const DriverStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
                         </thead>
                         <tbody className="divide-y divide-slate-700/60">
                             {loading ? (
-                                <tr>
-                                    <td colSpan={9} className="p-8 text-center text-slate-400">
-                                        加载中…
-                                    </td>
-                                </tr>
-                            ) : drivers.length === 0 ? (
-                                <tr>
-                                    <td colSpan={9} className="p-8 text-center text-slate-400">
-                                        暂无数据
-                                    </td>
-                                </tr>
+                                    <tr>
+                                        <td colSpan={usePoints ? 9 : 8} className="p-8 text-center text-slate-400">
+                                            加载中…
+                                        </td>
+                                    </tr>
+                                ) : drivers.length === 0 ? (
+                                    <tr>
+                                        <td colSpan={usePoints ? 9 : 8} className="p-8 text-center text-slate-400">
+                                            暂无数据
+                                        </td>
+                                    </tr>
                             ) : (
                                 drivers.map((d, idx) => (
                                     <tr
@@ -132,7 +142,7 @@ const DriverStandingsPage: React.FC<Props> = ({ onOpenDriver }) => {
                                         <td className="p-3 text-slate-400 font-mono text-xs">{idx + 1}</td>
                                         <td className="p-3 text-slate-100 font-medium">{d.name}</td>
                                         <td className="p-3"><DriverTierBadge tier={d.tier} /></td>
-                                        <td className="p-3 text-right text-amber-400 font-semibold">{d.points}</td>
+                                        {usePoints && <td className="p-3 text-right text-amber-400 font-semibold">{d.points}</td>}
                                         <td className="p-3 text-right">
                                             <span className={`font-semibold ${d.license_points <= 6 ? 'text-orange-400' : 'text-emerald-400'}`}>
                                                 {d.license_points}

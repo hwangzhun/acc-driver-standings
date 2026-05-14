@@ -30,8 +30,8 @@ export const POSITION_POINTS_MAP: Record<number, number> = {
     6: 8, 7: 6, 8: 4, 9: 2, 10: 1,
 };
 
-export function pointsForPosition(pos: number): number {
-    return POSITION_POINTS_MAP[pos] ?? 0;
+export function pointsForPosition(pos: number, map: Record<number, number> = POSITION_POINTS_MAP): number {
+    return map[pos] ?? 0;
 }
 
 export interface AccSchema2 {
@@ -137,7 +137,7 @@ export interface ParsedDriverResult {
     rawData: string;
 }
 
-export function parseJsonToResults(data: AccSchema2): {
+export function parseJsonToResults(data: AccSchema2, positionPointsMap?: Record<number, number>): {
     raceName: string;
     trackName: string;
     serverName: string;
@@ -160,7 +160,7 @@ export function parseJsonToResults(data: AccSchema2): {
             driverName: item.driverName ?? 'Unknown',
             steamId,
             position: pos,
-            points: pointsForPosition(pos),
+            points: pointsForPosition(pos, positionPointsMap),
             laps,
             totalTime,
             bestLap,

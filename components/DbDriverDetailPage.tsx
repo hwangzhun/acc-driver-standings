@@ -16,6 +16,7 @@ const STAT_CARDS = [
 interface Props {
     driverId: number;
     showSteamId: boolean;
+    usePoints: boolean;
     allowTierEdit?: boolean;
     onTierChange?: (tier: DriverTier) => void;
     onBack: () => void;
@@ -31,7 +32,7 @@ function formatTime(ms: number): string {
     return `${s}.${String(ms2).padStart(3, '0')}`;
 }
 
-const DbDriverDetailPage: React.FC<Props> = ({ driverId, showSteamId, allowTierEdit, onTierChange, onBack, onOpenRace }) => {
+const DbDriverDetailPage: React.FC<Props> = ({ driverId, showSteamId, usePoints, allowTierEdit, onTierChange, onBack, onOpenRace }) => {
     const [driver, setDriver] = useState<DriverRow | null | undefined>(undefined);
     const [history, setHistory] = useState<DriverRaceHistory[]>([]);
     const [logs, setLogs] = useState<LicensePointLog[]>([]);
@@ -138,7 +139,7 @@ const DbDriverDetailPage: React.FC<Props> = ({ driverId, showSteamId, allowTierE
                         )}
                     </div>
                     <div className="flex flex-wrap gap-3">
-                        {STAT_CARDS.map(({ key, label, icon: Icon, color }) => {
+                        {STAT_CARDS.filter(c => c.key !== 'points' || usePoints).map(({ key, label, icon: Icon, color }) => {
                             const val = (driver as Record<string, number>)[key] as number;
                             return (
                                 <div key={key} className="bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 min-w-[100px]">
@@ -167,7 +168,7 @@ const DbDriverDetailPage: React.FC<Props> = ({ driverId, showSteamId, allowTierE
                                 <th className="p-3 text-left">赛道</th>
                                 <th className="p-3 text-left">日期</th>
                                 <th className="p-3 text-right">名次</th>
-                                <th className="p-3 text-right">积分</th>
+                                {usePoints && <th className="p-3 text-right">积分</th>}
                                 <th className="p-3 text-right">圈数</th>
                                 <th className="p-3 text-right">用时</th>
                                 <th className="p-3 text-right">最快圈</th>
@@ -177,9 +178,9 @@ const DbDriverDetailPage: React.FC<Props> = ({ driverId, showSteamId, allowTierE
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-700/60">
-                            {history.length === 0 ? (
+                                {history.length === 0 ? (
                                 <tr>
-                                    <td colSpan={11} className="p-8 text-center text-slate-400">
+                                    <td colSpan={usePoints ? 11 : 10} className="p-8 text-center text-slate-400">
                                         暂无参赛记录
                                     </td>
                                 </tr>
@@ -198,7 +199,7 @@ const DbDriverDetailPage: React.FC<Props> = ({ driverId, showSteamId, allowTierE
                                                 {r.position}
                                             </span>
                                         </td>
-                                        <td className="p-3 text-right text-amber-400 font-semibold">{r.points}</td>
+                                        {usePoints && <td className="p-3 text-right text-amber-400 font-semibold">{r.points}</td>}
                                         <td className="p-3 text-right text-slate-300">{r.laps}</td>
                                         <td className="p-3 text-right text-slate-300 font-mono text-xs">{formatTime(r.total_time)}</td>
                                         <td className="p-3 text-right text-slate-300 font-mono text-xs">{formatTime(r.best_lap)}</td>
