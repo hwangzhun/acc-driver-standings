@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import 'dotenv/config';
 import express, { type Request, type Response, type RequestHandler } from 'express';
 import crypto from 'crypto';
 import Database from 'better-sqlite3';

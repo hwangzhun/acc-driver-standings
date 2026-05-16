@@ -53,6 +53,10 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver, usePoints: external
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
     const [search, setSearch] = useState('');
 
+    // ── Tab navigation state ──
+    type AdminTab = 'drivers' | 'system' | 'points';
+    const [activeTab, setActiveTab] = useState<AdminTab>('drivers');
+
     // ── Settings state ──
     const [usePoints, setUsePoints] = useState(externalUsePoints);
     const [settingsSaving, setSettingsSaving] = useState(false);
@@ -438,7 +442,30 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver, usePoints: external
 
     return (
         <div className="space-y-6">
+            {/* Tab navigation */}
+            <div className="flex flex-wrap gap-2">
+                {([
+                    { key: 'drivers', label: '车手管理' },
+                    { key: 'system', label: '系统设置' },
+                    { key: 'points', label: '名次积分设置' },
+                ] as { key: AdminTab; label: string }[]).map((tab) => (
+                    <button
+                        key={tab.key}
+                        type="button"
+                        onClick={() => setActiveTab(tab.key)}
+                        className={`px-4 py-2.5 rounded-lg text-sm font-medium border transition-colors ${
+                            activeTab === tab.key
+                                ? 'bg-slate-700 border-slate-500 text-white'
+                                : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:border-slate-500'
+                        }`}
+                    >
+                        {tab.label}
+                    </button>
+                ))}
+            </div>
+
             {/* System Settings */}
+            {activeTab === 'system' && (
             <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
@@ -464,8 +491,10 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver, usePoints: external
                     </button>
                 </div>
             </div>
+            )}
 
             {/* Position Points Config */}
+            {activeTab === 'points' && (
             <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
                 <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-3">
@@ -560,8 +589,10 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver, usePoints: external
                     </div>
                 )}
             </div>
+            )}
 
             {/* JSON Upload */}
+            {activeTab === 'drivers' && (
             <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
                 <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
                     <Upload className="w-5 h-5 text-green-400" />
@@ -612,6 +643,7 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver, usePoints: external
                     )}
                 </div>
             </div>
+            )}
 
             {driversError && (
                 <div className="bg-red-950/40 border border-red-800 rounded-lg px-4 py-3 text-sm text-red-200">
@@ -619,6 +651,7 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver, usePoints: external
                 </div>
             )}
             {/* Driver list */}
+            {activeTab === 'drivers' && (
             <div className="space-y-4">
                 <div className="flex flex-col sm:flex-row gap-3">
                     <div className="relative flex-1">
@@ -718,6 +751,7 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver, usePoints: external
                     </div>
                 </div>
             </div>
+            )}
 
             {/* License point modal */}
             {licenseDriver && (
