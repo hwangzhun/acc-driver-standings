@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import Header from '../components/Header';
 import AdminStandingsPage from '../components/AdminStandingsPage';
+import AdminCalendarPage from '../components/AdminCalendarPage';
 import DbDriverDetailPage from '../components/DbDriverDetailPage';
 import DbRaceDetailPage from '../components/DbRaceDetailPage';
 import { adminMe, adminLogout, clearAdminToken, getAppSettings } from '../services/standingsApi';
@@ -8,21 +9,23 @@ import { LogOut } from 'lucide-react';
 import LoginPage from './LoginPage';
 
 type AdminRoute =
-  | { type: 'home' }
-  | { type: 'driver'; id: number }
-  | { type: 'race'; id: number };
+    | { type: 'home' }
+    | { type: 'driver'; id: number }
+    | { type: 'race'; id: number }
+    | { type: 'calendar' };
 
 function parseRoute(): AdminRoute {
-  const raw = window.location.hash.replace(/^#/, '').replace(/^\//, '') || '';
-  if (raw.startsWith('driver/')) {
-    const n = Number(raw.slice('driver/'.length));
-    return Number.isFinite(n) ? { type: 'driver', id: n } : { type: 'home' };
-  }
-  if (raw.startsWith('race/')) {
-    const n = Number(raw.slice('race/'.length));
-    return Number.isFinite(n) ? { type: 'race', id: n } : { type: 'home' };
-  }
-  return { type: 'home' };
+    const raw = window.location.hash.replace(/^#/, '').replace(/^\//, '') || '';
+    if (raw === 'calendar') return { type: 'calendar' };
+    if (raw.startsWith('driver/')) {
+        const n = Number(raw.slice('driver/'.length));
+        return Number.isFinite(n) ? { type: 'driver', id: n } : { type: 'home' };
+    }
+    if (raw.startsWith('race/')) {
+        const n = Number(raw.slice('race/'.length));
+        return Number.isFinite(n) ? { type: 'race', id: n } : { type: 'home' };
+    }
+    return { type: 'home' };
 }
 
 const AdminApp: React.FC = () => {
@@ -94,24 +97,47 @@ const AdminApp: React.FC = () => {
     return <LoginPage onSuccess={() => setAuthenticated(true)} />;
   }
 
-  const navActive = {
-    home: route.type === 'home',
-    driver: route.type === 'driver',
-    race: route.type === 'race',
-  };
+const navActive = {
+        home: route.type === 'home',
+        driver: route.type === 'driver',
+        race: route.type === 'race',
+        calendar: route.type === 'calendar',
+    };
 
-  const headerNav = (
-    <>
-      <button
-        type="button"
-        onClick={handleLogout}
-        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium border border-slate-700 text-slate-300 hover:border-slate-500 hover:text-white transition-colors"
-      >
-        <LogOut className="w-4 h-4" />
-        退出登录
-      </button>
-    </>
-  );
+    const headerNav = (
+        <>
+            <button
+                type="button"
+                onClick={() => { window.location.hash = '/'; }}
+                className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                    navActive.home
+                        ? 'bg-red-700 border-red-600 text-white'
+                        : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:border-slate-500 hover:text-white'
+                }`}
+            >
+                榜单管理
+            </button>
+            <button
+                type="button"
+                onClick={() => { window.location.hash = '/calendar'; }}
+                className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                    navActive.calendar
+                        ? 'bg-red-700 border-red-600 text-white'
+                        : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:border-slate-500 hover:text-white'
+                }`}
+            >
+                赛历管理
+            </button>
+            <button
+                type="button"
+                onClick={handleLogout}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium border border-slate-700 text-slate-300 hover:border-slate-500 hover:text-white transition-colors"
+            >
+                <LogOut className="w-4 h-4" />
+                退出登录
+            </button>
+        </>
+    );
 
   const openDriver = (id: number) => {
     window.location.hash = `/driver/${id}`;
@@ -162,6 +188,9 @@ const AdminApp: React.FC = () => {
             usePoints={usePoints}
             onBack={() => { window.location.hash = '/'; }}
           />
+        )}
+        {route.type === 'calendar' && (
+          <AdminCalendarPage onBack={() => { window.location.hash = '/'; }} />
         )}
       </main>
 

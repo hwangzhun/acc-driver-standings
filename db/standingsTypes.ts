@@ -117,3 +117,21 @@ export interface AppSettings {
     usePoints: boolean;
     positionPointsMap: Record<number, number>;
 }
+
+export interface CalendarEventRow {
+    id: number;
+    event_date: string;
+    title: string;
+    track_name: string | null;
+    notes: string | null;
+    linked_race_id: number | null;
+    event_detail: string | null;
+    event_session_time: string | null;
+    race_duration: string | null;
+    car_group: string | null;
+    bop: string | null;
+    entry_requirements: string | null;
+    pit_rules: string | null;
+    created_at: string;
+    updated_at: string;
+}

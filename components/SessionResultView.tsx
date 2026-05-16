@@ -3,6 +3,7 @@ import { ArrowLeft, List } from 'lucide-react';
 import Leaderboard from './Leaderboard';
 import DriverDetail from './DriverDetail';
 import type { AccResultData } from '../types';
+import { trackDisplay } from '../constants/tracks';
 import { sessionTypeLabelCn } from '../utils';
 
 function formatSessionDateLabel(raw?: string | null): string {
@@ -79,7 +80,7 @@ const SessionResultView: React.FC<SessionResultViewProps> = ({
                 </h2>
                 <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-400">
                     {viewData.trackName ? (
-                        <span className="font-mono capitalize">{viewData.trackName}</span>
+                        <span>{trackDisplay(viewData.trackName)}</span>
                     ) : null}
                     {viewData.trackName && (viewData.sessionType || sessionDateLabel) ? (
                         <span className="text-slate-600" aria-hidden>

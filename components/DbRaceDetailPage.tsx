@@ -6,6 +6,7 @@ import { parseAccResultsPayload, normalizeJsonText } from '../utils';
 import type { AccResultData } from '../types';
 import SessionResultView from './SessionResultView';
 import { ArrowLeft, Calendar, MapPin } from 'lucide-react';
+import { trackDisplay } from '../constants/tracks';
 
 function formatTime(ms: number): string {
     if (!ms || ms <= 0) return '-';
@@ -162,7 +163,7 @@ const DbRaceDetailPage: React.FC<Props> = ({ raceId, showSteamId, usePoints, onB
                     {race.track_name && (
                         <span className="flex items-center gap-1.5">
                             <MapPin className="w-4 h-4 text-red-400" />
-                            <span className="font-mono capitalize">{race.track_name}</span>
+                            <span>{trackDisplay(race.track_name)}</span>
                         </span>
                     )}
                     {race.race_date && (

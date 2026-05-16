@@ -1,6 +1,7 @@
 import React from 'react';
 import { type ResultIndexItem } from '../types';
 import { ChevronRight } from 'lucide-react';
+import { trackDisplay } from '../constants/tracks';
 
 interface ResultListProps {
   items: ResultIndexItem[];
@@ -39,8 +40,8 @@ const ResultList: React.FC<ResultListProps> = ({ items, onOpenResult }) => {
                 <td className="p-3 text-slate-100 font-semibold group-hover:text-red-100">
                   {item.title}
                 </td>
-                <td className="p-3 text-slate-300 capitalize font-mono text-xs sm:text-sm">
-                  {item.track || '—'}
+                <td className="p-3 text-slate-300 text-xs sm:text-sm">
+                  {trackDisplay(item.track)}
                 </td>
                 <td className="p-3 text-slate-400 font-mono text-xs sm:text-sm whitespace-nowrap">
                   {item.date || '—'}

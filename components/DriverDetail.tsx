@@ -12,6 +12,7 @@ import {
     isIgnoredJsonPenaltyType,
 } from '../utils';
 import { TrendingUp, AlertTriangle } from 'lucide-react';
+import { trackDisplay } from '../constants/tracks';
 
 interface DriverDetailProps {
     carId: number | null;
@@ -56,7 +57,7 @@ const DriverDetail: React.FC<DriverDetailProps> = ({
                     <p className="text-slate-400 text-sm font-medium mb-2 max-w-full px-2">{sessionTitle}</p>
                 ) : null}
                 {trackName ? (
-                    <p className="text-xs text-slate-600 font-mono capitalize mb-3">{trackName}</p>
+                    <p className="text-xs text-slate-600 mb-3">{trackDisplay(trackName)}</p>
                 ) : null}
                 <p className="text-sm">请从排行榜选择一位车手以查看详细数据。</p>
             </div>

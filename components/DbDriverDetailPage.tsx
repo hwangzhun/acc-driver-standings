@@ -3,6 +3,7 @@ import type { DriverRow, DriverRaceHistory, LicensePointLog, DriverTier } from '
 import { getDriverById, getDriverRaceHistory, getLicensePointLogs, patchDriverTier } from '../services/standingsApi';
 import { ArrowLeft, Calendar, MapPin, Trophy, Star, Target } from 'lucide-react';
 import DriverTierBadge from './DriverTierBadge';
+import { trackDisplay } from '../constants/tracks';
 
 const STAT_CARDS = [
     { key: 'points', label: '积分', icon: Trophy, color: 'text-amber-400' },
@@ -192,7 +193,7 @@ const DbDriverDetailPage: React.FC<Props> = ({ driverId, showSteamId, usePoints,
                                         onClick={() => onOpenRace(r.race_id)}
                                     >
                                         <td className="p-3 text-slate-100">{r.race_name}</td>
-                                        <td className="p-3 text-slate-400 font-mono capitalize">{r.track_name}</td>
+                                        <td className="p-3 text-slate-400">{trackDisplay(r.track_name)}</td>
                                         <td className="p-3 text-slate-400 text-xs">{r.race_date?.slice(0, 10)}</td>
                                         <td className="p-3 text-right">
                                             <span className={`font-bold ${r.position <= 3 ? 'text-amber-400' : 'text-slate-200'}`}>

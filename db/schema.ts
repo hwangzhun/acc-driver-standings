@@ -65,4 +65,22 @@ CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS race_calendar (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_date TEXT NOT NULL,
+    title TEXT NOT NULL,
+    track_name TEXT,
+    notes TEXT,
+    linked_race_id INTEGER,
+    event_detail TEXT,
+    event_session_time TEXT,
+    race_duration TEXT,
+    car_group TEXT,
+    bop TEXT,
+    entry_requirements TEXT,
+    pit_rules TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
 `;

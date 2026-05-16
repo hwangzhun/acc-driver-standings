@@ -4,6 +4,7 @@ import ResultList from './components/ResultList';
 import DriverStandingsPage from './components/DriverStandingsPage';
 import DbDriverDetailPage from './components/DbDriverDetailPage';
 import DbRaceDetailPage from './components/DbRaceDetailPage';
+import CalendarPage from './components/CalendarPage';
 import type { ResultIndexItem } from './types';
 import { sessionTypeLabelCn } from './utils';
 import { initStandingsApi, getRaces, getAppSettings } from './services/standingsApi';
@@ -12,20 +13,23 @@ export type AppRoute =
     | { type: 'home' }
     | { type: 'drivers' }
     | { type: 'driver'; id: number }
-    | { type: 'race'; id: number };
+    | { type: 'race'; id: number }
+    | { type: 'calendar' };
 
 function parseRoute(): AppRoute {
-    const raw = window.location.hash.replace(/^#/, '').replace(/^\//, '') || '';
+    const raw = window.location.hash.replace(/^#/, '').replace(/^\//, '');
+    if (raw === '') return { type: 'home' };
     if (raw === 'drivers') return { type: 'drivers' };
+    if (raw === 'calendar') return { type: 'calendar' };
     if (raw.startsWith('driver/')) {
         const n = Number(raw.slice('driver/'.length));
         return Number.isFinite(n) ? { type: 'driver', id: n } : { type: 'drivers' };
     }
     if (raw.startsWith('race/')) {
         const n = Number(raw.slice('race/'.length));
-        return Number.isFinite(n) ? { type: 'race', id: n } : { type: 'home' };
+        return Number.isFinite(n) ? { type: 'race', id: n } : { type: 'drivers' };
     }
-    return { type: 'home' };
+    return { type: 'drivers' };
 }
 
 const RACE_BACK_KEY = 'acc-race-detail-back-hash';
@@ -129,17 +133,20 @@ const App: React.FC = () => {
     const isStandingsSection =
         route.type === 'drivers' ||
         route.type === 'driver' ||
-        route.type === 'race';
+        route.type === 'race' ||
+        route.type === 'calendar';
 
     const navActive = {
         sessions: route.type === 'home',
         drivers: route.type === 'drivers' || route.type === 'driver' || route.type === 'race',
+        calendar: route.type === 'calendar',
     };
 
     const headerNav = (
         <>
             <NavLink href="#/" label="单场成绩" active={navActive.sessions} />
             <NavLink href="#/drivers" label="车手榜单" active={navActive.drivers} />
+            <NavLink href="#/calendar" label="赛历" active={navActive.calendar} />
         </>
     );
 
@@ -185,6 +192,9 @@ const App: React.FC = () => {
                                 usePoints={usePoints}
                                 onBack={raceDetailBack}
                             />
+                        )}
+                        {sqliteReady && route.type === 'calendar' && (
+                            <CalendarPage onOpenRace={openRace} />
                         )}
                     </>
                 )}

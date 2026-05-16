@@ -5,7 +5,7 @@ node_modules/
 dist/
 
 # Local SQLite (standings API)
-data/*.sqlite
+data/*.sqlite*
 
 # Local env / secrets
 .env

@@ -94,6 +94,29 @@ function openDatabase(): Database {
         database.exec("ALTER TABLE drivers ADD COLUMN tier TEXT NOT NULL DEFAULT 'Rookie'");
     }
 
+    const calCols = database.prepare('PRAGMA table_info(race_calendar)').all() as Array<{ name: string }>;
+    const calNewCols = [
+        { name: 'event_detail', sql: 'TEXT' },
+        { name: 'event_session_time', sql: 'TEXT' },
+        { name: 'race_duration', sql: 'TEXT' },
+        { name: 'car_group', sql: 'TEXT' },
+        { name: 'bop', sql: 'TEXT' },
+        { name: 'entry_requirements', sql: 'TEXT' },
+        { name: 'pit_rules', sql: 'TEXT' },
+    ];
+    for (const col of calNewCols) {
+        if (!calCols.some((c) => c.name === col.name)) {
+            database.exec(`ALTER TABLE race_calendar ADD COLUMN ${col.name} ${col.sql}`);
+        }
+    }
+    // Remove deprecated columns if they exist (legacy migration)
+    const dropCols = ['sort_order', 'race_start_time'];
+    for (const col of dropCols) {
+        if (calCols.some((c) => c.name === col)) {
+            database.exec(`ALTER TABLE race_calendar DROP COLUMN ${col}`);
+        }
+    }
+
     database.exec(STANDINGS_SCHEMA_SQL);
     database.prepare("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('use_points', '1')").run();
     database.prepare("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('position_points_map', ?)").run(
@@ -436,6 +459,187 @@ app.get('/api/races/:id/results', (req: Request, res: Response) => {
         ORDER BY rr.position ASC
     `).all(id);
     res.json(rows);
+});
+
+// ── Calendar ───────────────────────────────────────────────────────────────────
+
+app.get('/api/calendar', (_req: Request, res: Response) => {
+    const rows = db.prepare(
+        'SELECT * FROM race_calendar ORDER BY event_date ASC, id ASC'
+    ).all();
+    res.json(rows);
+});
+
+app.post('/api/admin/calendar', requireAdmin, (req: Request, res: Response) => {
+    const body = req.body as {
+        event_date?: unknown;
+        title?: unknown;
+        track_name?: unknown;
+        notes?: unknown;
+        linked_race_id?: unknown;
+        event_detail?: unknown;
+        event_session_time?: unknown;
+        race_duration?: unknown;
+        car_group?: unknown;
+        bop?: unknown;
+        entry_requirements?: unknown;
+        pit_rules?: unknown;
+    };
+
+    const eventDate = typeof body.event_date === 'string' ? body.event_date.trim() : '';
+    const title = typeof body.title === 'string' ? body.title.trim() : '';
+    if (!eventDate || !title) {
+        res.status(400).json({ error: '日期和标题不能为空' });
+        return;
+    }
+
+    const linkedRaceId = body.linked_race_id != null ? Number(body.linked_race_id) : null;
+    if (linkedRaceId !== null && (!Number.isFinite(linkedRaceId) || linkedRaceId < 1)) {
+        res.status(400).json({ error: 'linked_race_id 无效' });
+        return;
+    }
+    if (linkedRaceId !== null) {
+        const exists = db.prepare('SELECT id FROM races WHERE id = ?').get(linkedRaceId);
+        if (!exists) {
+            res.status(400).json({ error: '关联的场次不存在' });
+            return;
+        }
+    }
+
+    const trackName = typeof body.track_name === 'string' ? body.track_name.trim() : '';
+    const notes = typeof body.notes === 'string' ? body.notes.trim() : '';
+    const eventDetail = typeof body.event_detail === 'string' ? body.event_detail.trim() : '';
+    const eventSessionTime = typeof body.event_session_time === 'string' ? body.event_session_time.trim() : '';
+    const raceDuration = typeof body.race_duration === 'string' ? body.race_duration.trim() : '';
+    const carGroup = typeof body.car_group === 'string' ? body.car_group.trim() : '';
+    const bop = typeof body.bop === 'string' ? body.bop.trim() : '';
+    const entryRequirements = typeof body.entry_requirements === 'string' ? body.entry_requirements.trim() : '';
+    const pitRules = typeof body.pit_rules === 'string' ? body.pit_rules.trim() : '';
+
+    db.prepare(
+        `INSERT INTO race_calendar (event_date, title, track_name, notes, linked_race_id, event_detail, event_session_time, race_duration, car_group, bop, entry_requirements, pit_rules)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(eventDate, title, trackName, notes, linkedRaceId, eventDetail, eventSessionTime, raceDuration, carGroup, bop, entryRequirements, pitRules);
+    const row = db.prepare('SELECT last_insert_rowid() as id').get() as { id: number };
+    res.json({ id: Number(row.id) });
+});
+
+app.patch('/api/admin/calendar/:id', requireAdmin, (req: Request, res: Response) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id < 1) {
+        res.status(400).json({ error: 'Invalid id' });
+        return;
+    }
+
+    const existing = db.prepare('SELECT id FROM race_calendar WHERE id = ?').get(id);
+    if (!existing) {
+        res.status(404).json({ error: '赛历条目不存在' });
+        return;
+    }
+
+    const body = req.body as {
+        event_date?: unknown;
+        title?: unknown;
+        track_name?: unknown;
+        notes?: unknown;
+        linked_race_id?: unknown;
+        event_detail?: unknown;
+        event_session_time?: unknown;
+        race_duration?: unknown;
+        car_group?: unknown;
+        bop?: unknown;
+        entry_requirements?: unknown;
+        pit_rules?: unknown;
+    };
+
+    const eventDate = typeof body.event_date === 'string' ? body.event_date.trim() : undefined;
+    const title = typeof body.title === 'string' ? body.title.trim() : undefined;
+    if (eventDate === '' || title === '') {
+        res.status(400).json({ error: '日期和标题不能为空' });
+        return;
+    }
+
+    const linkedRaceId = body.linked_race_id != null ? Number(body.linked_race_id) : undefined;
+    if (linkedRaceId !== undefined && linkedRaceId !== null && (!Number.isFinite(linkedRaceId) || linkedRaceId < 1)) {
+        res.status(400).json({ error: 'linked_race_id 无效' });
+        return;
+    }
+    if (linkedRaceId !== undefined && linkedRaceId !== null) {
+        const exists = db.prepare('SELECT id FROM races WHERE id = ?').get(linkedRaceId);
+        if (!exists) {
+            res.status(400).json({ error: '关联的场次不存在' });
+            return;
+        }
+    }
+
+    const trackName = body.track_name !== undefined
+        ? (typeof body.track_name === 'string' ? body.track_name.trim() : '')
+        : undefined;
+    const notes = body.notes !== undefined
+        ? (typeof body.notes === 'string' ? body.notes.trim() : '')
+        : undefined;
+
+    const eventDetail = body.event_detail !== undefined
+        ? (typeof body.event_detail === 'string' ? body.event_detail.trim() : '')
+        : undefined;
+    const eventSessionTime = body.event_session_time !== undefined
+        ? (typeof body.event_session_time === 'string' ? body.event_session_time.trim() : '')
+        : undefined;
+    const raceDuration = body.race_duration !== undefined
+        ? (typeof body.race_duration === 'string' ? body.race_duration.trim() : '')
+        : undefined;
+    const carGroup = body.car_group !== undefined
+        ? (typeof body.car_group === 'string' ? body.car_group.trim() : '')
+        : undefined;
+    const bop = body.bop !== undefined
+        ? (typeof body.bop === 'string' ? body.bop.trim() : '')
+        : undefined;
+    const entryRequirements = body.entry_requirements !== undefined
+        ? (typeof body.entry_requirements === 'string' ? body.entry_requirements.trim() : '')
+        : undefined;
+    const pitRules = body.pit_rules !== undefined
+        ? (typeof body.pit_rules === 'string' ? body.pit_rules.trim() : '')
+        : undefined;
+
+    const sets: string[] = ['updated_at = datetime(\'now\')'];
+    const vals: unknown[] = [];
+
+    if (eventDate !== undefined) { sets.push('event_date = ?'); vals.push(eventDate); }
+    if (title !== undefined) { sets.push('title = ?'); vals.push(title); }
+    if (trackName !== undefined) { sets.push('track_name = ?'); vals.push(trackName); }
+    if (notes !== undefined) { sets.push('notes = ?'); vals.push(notes); }
+    if (linkedRaceId !== undefined) { sets.push('linked_race_id = ?'); vals.push(linkedRaceId); }
+    if (eventDetail !== undefined) { sets.push('event_detail = ?'); vals.push(eventDetail); }
+    if (eventSessionTime !== undefined) { sets.push('event_session_time = ?'); vals.push(eventSessionTime); }
+    if (raceDuration !== undefined) { sets.push('race_duration = ?'); vals.push(raceDuration); }
+    if (carGroup !== undefined) { sets.push('car_group = ?'); vals.push(carGroup); }
+    if (bop !== undefined) { sets.push('bop = ?'); vals.push(bop); }
+    if (entryRequirements !== undefined) { sets.push('entry_requirements = ?'); vals.push(entryRequirements); }
+    if (pitRules !== undefined) { sets.push('pit_rules = ?'); vals.push(pitRules); }
+
+    if (vals.length === 0) {
+        res.json({ ok: true });
+        return;
+    }
+
+    vals.push(id);
+    db.prepare(`UPDATE race_calendar SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
+    res.json({ ok: true });
+});
+
+app.delete('/api/admin/calendar/:id', requireAdmin, (req: Request, res: Response) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id < 1) {
+        res.status(400).json({ error: 'Invalid id' });
+        return;
+    }
+    const existing = db.prepare('SELECT id FROM race_calendar WHERE id = ?').get(id);
+    if (!existing) {
+        res.status(404).json({ error: '赛历条目不存在' });
+        return;
+    }
+    db.prepare('DELETE FROM race_calendar WHERE id = ?').run(id);
+    res.json({ ok: true });
 });
 
 interface ImportResultRow {

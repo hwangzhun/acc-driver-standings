@@ -8,6 +8,7 @@ import type {
     SortField,
     SortOrder,
     AppSettings,
+    CalendarEventRow,
 } from '../db/standingsTypes';
 import type { ParsedDriverResult } from '../utils/standingsImport';
 
@@ -222,5 +223,62 @@ export async function updatePositionPointsMap(
         method: 'PATCH',
         body: JSON.stringify({ map }),
     });
+    return parseJson(res);
+}
+
+// ── Calendar API ────────────────────────────────────────────────────────────────
+
+export async function getCalendarEvents(): Promise<CalendarEventRow[]> {
+    const res = await fetch(apiUrl('/api/calendar'));
+    return parseJson<CalendarEventRow[]>(res);
+}
+
+export async function adminCreateCalendarEvent(body: {
+    event_date: string;
+    title: string;
+    track_name?: string;
+    notes?: string;
+    linked_race_id?: number | null;
+    event_detail?: string;
+    event_session_time?: string;
+    race_duration?: string;
+    car_group?: string;
+    bop?: string;
+    entry_requirements?: string;
+    pit_rules?: string;
+}): Promise<{ id: number }> {
+    const res = await adminFetch('/api/admin/calendar', {
+        method: 'POST',
+        body: JSON.stringify(body),
+    });
+    return parseJson(res);
+}
+
+export async function adminUpdateCalendarEvent(
+    id: number,
+    body: {
+        event_date?: string;
+        title?: string;
+        track_name?: string;
+        notes?: string;
+        linked_race_id?: number | null;
+        event_detail?: string;
+        event_session_time?: string;
+        race_duration?: string;
+        car_group?: string;
+        bop?: string;
+        entry_requirements?: string;
+        pit_rules?: string;
+    }
+): Promise<{ ok: boolean }> {
+    const res = await adminFetch(`/api/admin/calendar/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+    });
+    return parseJson(res);
+}
+
+export async function adminDeleteCalendarEvent(id: number): Promise<{ ok: boolean }> {
+    const res = await adminFetch(`/api/admin/calendar/${id}`, { method: 'DELETE' });
     return parseJson(res);
 }
