@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import Header from '../components/Header';
 import AdminStandingsPage from '../components/AdminStandingsPage';
 import AdminCalendarPage from '../components/AdminCalendarPage';
+import AdminRacesPage from '../components/AdminRacesPage';
 import DbDriverDetailPage from '../components/DbDriverDetailPage';
 import DbRaceDetailPage from '../components/DbRaceDetailPage';
 import { adminMe, adminLogout, clearAdminToken, getAppSettings } from '../services/standingsApi';
@@ -12,11 +13,13 @@ type AdminRoute =
     | { type: 'home' }
     | { type: 'driver'; id: number }
     | { type: 'race'; id: number }
-    | { type: 'calendar' };
+    | { type: 'calendar' }
+    | { type: 'races' };
 
 function parseRoute(): AdminRoute {
     const raw = window.location.hash.replace(/^#/, '').replace(/^\//, '') || '';
     if (raw === 'calendar') return { type: 'calendar' };
+    if (raw === 'races') return { type: 'races' };
     if (raw.startsWith('driver/')) {
         const n = Number(raw.slice('driver/'.length));
         return Number.isFinite(n) ? { type: 'driver', id: n } : { type: 'home' };
@@ -33,6 +36,7 @@ const AdminApp: React.FC = () => {
   const [authenticated, setAuthenticated] = useState(false);
   const [route, setRoute] = useState<AdminRoute>(() => parseRoute());
   const [usePoints, setUsePoints] = useState(false);
+  const [autoRookieBronze, setAutoRookieBronze] = useState(false);
   const [positionPointsMap, setPositionPointsMap] = useState<Record<number, number>>({});
 
   useEffect(() => {
@@ -50,6 +54,7 @@ const AdminApp: React.FC = () => {
         try {
           const s = await getAppSettings();
           setUsePoints(s.usePoints);
+          setAutoRookieBronze(s.autoRookieBronze);
           setPositionPointsMap(s.positionPointsMap);
         } catch {
           /* ignore */
@@ -102,6 +107,7 @@ const navActive = {
         driver: route.type === 'driver',
         race: route.type === 'race',
         calendar: route.type === 'calendar',
+        races: route.type === 'races',
     };
 
     const headerNav = (
@@ -127,6 +133,17 @@ const navActive = {
                 }`}
             >
                 赛历管理
+            </button>
+            <button
+                type="button"
+                onClick={() => { window.location.hash = '/races'; }}
+                className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                    navActive.races
+                        ? 'bg-red-700 border-red-600 text-white'
+                        : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:border-slate-500 hover:text-white'
+                }`}
+            >
+                已上传比赛
             </button>
             <button
                 type="button"
@@ -166,6 +183,8 @@ const navActive = {
             onOpenDriver={openDriver}
             usePoints={usePoints}
             onUsePointsChange={setUsePoints}
+            autoRookieBronze={autoRookieBronze}
+            onAutoRookieBronzeChange={setAutoRookieBronze}
             positionPointsMap={positionPointsMap}
             onPositionPointsMapChange={setPositionPointsMap}
           />
@@ -186,16 +205,31 @@ const navActive = {
             raceId={route.id}
             showSteamId
             usePoints={usePoints}
-            onBack={() => { window.location.hash = '/'; }}
+            onBack={() => {
+              let back = '/';
+              try {
+                back = sessionStorage.getItem('acc-admin-race-back') || '/';
+                sessionStorage.removeItem('acc-admin-race-back');
+              } catch { /* ignore */ }
+              window.location.hash = back.startsWith('/') ? back : `/${back}`;
+            }}
           />
         )}
         {route.type === 'calendar' && (
           <AdminCalendarPage onBack={() => { window.location.hash = '/'; }} />
         )}
+        {route.type === 'races' && (
+          <AdminRacesPage
+            onOpenRace={(id) => {
+              try { sessionStorage.setItem('acc-admin-race-back', '/races'); } catch { /* ignore */ }
+              openRace(id);
+            }}
+          />
+        )}
       </main>
 
       <footer className="bg-slate-950 text-slate-600 text-center p-4 text-xs border-t border-slate-900 mt-auto">
-        ACC 成绩展示站 By Hwangzhun &copy; {new Date().getFullYear()}
+        TZCC 车手榜 By Hwangzhun &copy; {new Date().getFullYear()} 粤ICP备2025468867号-1
       </footer>
     </div>
   );

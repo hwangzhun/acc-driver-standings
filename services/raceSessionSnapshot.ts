@@ -31,6 +31,20 @@ export async function putRaceSessionSnapshot(raceId: number, jsonText: string): 
     }
 }
 
+export async function deleteRaceSessionSnapshot(raceId: number): Promise<void> {
+    const db = await openDb();
+    try {
+        await new Promise<void>((resolve, reject) => {
+            const tx = db.transaction(STORE, 'readwrite');
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error ?? new Error('IDB transaction failed'));
+            tx.objectStore(STORE).delete(raceId);
+        });
+    } finally {
+        db.close();
+    }
+}
+
 export async function getRaceSessionSnapshot(raceId: number): Promise<string | null> {
     const db = await openDb();
     try {

@@ -137,6 +137,26 @@ export interface ParsedDriverResult {
     rawData: string;
 }
 
+export interface EditableDriverResult extends ParsedDriverResult {
+    removed?: boolean;
+}
+
+export function dbResultsToParsed(
+    rows: Array<{ driver_name: string; steam_id: string; position: number; points: number; laps: number; total_time: number; best_lap: number; raw_data: string }>
+): EditableDriverResult[] {
+    return rows.map(row => ({
+        driverName: row.driver_name,
+        steamId: row.steam_id,
+        position: row.position,
+        points: row.points,
+        laps: row.laps,
+        totalTime: row.total_time,
+        bestLap: row.best_lap,
+        rawData: row.raw_data,
+        removed: false,
+    }));
+}
+
 export function parseJsonToResults(data: AccSchema2, positionPointsMap?: Record<number, number>): {
     raceName: string;
     trackName: string;

@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+
+# Build artifacts
+dist/
+
+# Local env / secrets
+.env
+.env.*
+!.env.example
+
+# SQLite
+data/*.sqlite*
+!data/.gitkeep
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+
+# Vite
+*.local
+
+# TypeScript
+*.tsbuildinfo
+
+# Optional tooling
+coverage/
+.cache/
+
+# Cursor
+.cursor/
+
+# Git
+.git/
+.gitignore

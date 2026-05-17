@@ -1,0 +1,27 @@
+name: acc-driver-standings
+
+services:
+  app:
+    image: Hwangzhun/acc-driver-standings:${IMAGE_TAG:-latest}
+    container_name: acc-standings
+    ports:
+      - "5174:5174"
+    environment:
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请设置 ADMIN_PASSWORD 环境变量}
+      PORT: "5174"
+      SQLITE_PATH: /data/standings.sqlite
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+    networks:
+      - acc-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:5174/api/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  acc-network:
+    driver: bridge

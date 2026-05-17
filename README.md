@@ -23,6 +23,51 @@ npm run build
 
 预览生产构建：`npm run preview`
 
+## Docker 部署
+
+所有服务（前端 + Express API + SQLite）打包在单一容器内，数据通过卷持久化。
+
+### 前置条件
+
+- Docker 24+
+- Docker Compose v2
+
+### 启动
+
+```bash
+# 1. 在项目根目录创建 .env（必须设置 ADMIN_PASSWORD）
+echo "ADMIN_PASSWORD=你的强密码" > .env
+
+# 2. 构建并后台启动
+docker compose up -d --build
+
+# 3. 访问
+# 用户端: http://localhost:5174/
+# 管理端: http://localhost:5174/admin.html
+```
+
+### 数据持久化
+
+数据库文件（`standings.sqlite` 及其 WAL 附属文件）挂载在宿主机的 `./data` 目录，升级镜像或重启容器不会丢失。
+
+**备份**（停止容器或确认无写入时执行）：
+
+```bash
+cp -r ./data ./data.backup
+```
+
+### 单独使用 Docker Run
+
+```bash
+docker build -t acc-standings .
+docker run -d --name acc-standings \
+  -p 5174:5174 \
+  -e ADMIN_PASSWORD=你的强密码 \
+  -e SQLITE_PATH=/data/standings.sqlite \
+  -v "$(pwd)/data:/data" \
+  acc-standings
+```
+
 ## COS + STS（前端直连）配置
 
 1. 安装依赖（已在项目中）：

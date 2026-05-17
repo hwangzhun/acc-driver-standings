@@ -116,6 +116,7 @@ export interface ImportResult {
 export interface AppSettings {
     usePoints: boolean;
     positionPointsMap: Record<number, number>;
+    autoRookieBronze: boolean;
 }
 
 export interface CalendarEventRow {

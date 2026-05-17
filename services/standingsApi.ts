@@ -189,6 +189,33 @@ export async function adminImportRace(
     return parseJson(res);
 }
 
+export async function adminDeleteRace(
+    raceId: number
+): Promise<{ ok: boolean; raceName: string; resultCount: number }> {
+    const res = await adminFetch(`/api/admin/races/${raceId}`, { method: 'DELETE' });
+    return parseJson(res);
+}
+
+export interface AdminUpdateRaceBody {
+    raceName: string;
+    trackName: string;
+    serverName: string;
+    raceDate: string;
+    sessionType: string;
+    results: ParsedDriverResult[];
+}
+
+export async function adminUpdateRace(
+    raceId: number,
+    body: AdminUpdateRaceBody
+): Promise<{ ok: boolean; raceId: number; resultCount: number }> {
+    const res = await adminFetch(`/api/admin/races/${raceId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+    });
+    return parseJson(res);
+}
+
 export async function patchDriverTier(driverId: number, tier: string): Promise<{ ok: boolean }> {
     const res = await adminFetch(`/api/drivers/${driverId}/tier`, {
         method: 'PATCH',
@@ -208,7 +235,7 @@ export async function postDriverLicenseChange(
     return parseJson(res);
 }
 
-export async function updateAppSettings(s: { usePoints: boolean }): Promise<{ usePoints: boolean }> {
+export async function updateAppSettings(s: { usePoints?: boolean; autoRookieBronze?: boolean }): Promise<{ usePoints?: boolean; autoRookieBronze?: boolean; promotedCount?: number }> {
     const res = await adminFetch('/api/admin/settings', {
         method: 'PATCH',
         body: JSON.stringify(s),

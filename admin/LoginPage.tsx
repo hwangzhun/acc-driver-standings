@@ -86,7 +86,7 @@ const LoginPage: React.FC<Props> = ({ onSuccess }) => {
       </main>
 
       <footer className="bg-slate-950 text-slate-600 text-center p-4 text-xs border-t border-slate-900">
-        ACC 成绩展示站 By Hwangzhun &copy; {new Date().getFullYear()}
+        TZCC 车手榜 By Hwangzhun &copy; {new Date().getFullYear()} 粤ICP备2025468867号-1
       </footer>
     </div>
   );

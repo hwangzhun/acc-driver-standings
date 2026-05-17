@@ -9,8 +9,8 @@ interface HeaderProps {
 }
 
 const Header: React.FC<HeaderProps> = ({
-    title = 'ACC Racing Results',
-    subtitle = 'ACC 成绩展示站',
+    title = 'TZCC Racing Results',
+    subtitle = 'TZCC 车手榜',
     nav,
 }) => {
     return (

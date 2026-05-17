@@ -26,6 +26,8 @@ const DEFAULT_POSITION_POINTS: Record<number, number> = {
     6: 8, 7: 6, 8: 4, 9: 2, 10: 1,
 };
 
+const ROOKIE_TO_BRONZE_RACE_THRESHOLD = 10;
+
 function readPositionPointsMap(): Record<number, number> {
     const row = db.prepare("SELECT value FROM app_settings WHERE key = 'position_points_map'").get() as
         | { value: string }
@@ -46,6 +48,22 @@ function readPositionPointsMap(): Record<number, number> {
         }
     } catch { /* fall through */ }
     return { ...DEFAULT_POSITION_POINTS };
+}
+
+function readAutoRookieBronzeEnabled(): boolean {
+    const row = db.prepare("SELECT value FROM app_settings WHERE key = 'auto_rookie_bronze'").get() as
+        | { value: string }
+        | undefined;
+    return row?.value === '1';
+}
+
+function applyRookieToBronzePromotion(): number {
+    if (!readAutoRookieBronzeEnabled()) return 0;
+    const result = db.prepare(`
+        UPDATE drivers SET tier = 'Bronze', updated_at = datetime('now')
+        WHERE tier = 'Rookie' AND total_races >= ?
+    `).run(ROOKIE_TO_BRONZE_RACE_THRESHOLD);
+    return result.changes;
 }
 
 // ── Admin auth ──────────────────────────────────────────────────────────────────
@@ -122,6 +140,7 @@ function openDatabase(): Database {
     database.prepare("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('position_points_map', ?)").run(
         JSON.stringify(DEFAULT_POSITION_POINTS)
     );
+    database.prepare("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('auto_rookie_bronze', '0')").run();
 
     return database;
 }
@@ -154,6 +173,7 @@ function updateDriverStats(driverId: number) {
             updated_at = datetime('now')
         WHERE id = ?
     `).run(driverId, driverId, driverId, driverId, driverId, driverId);
+    applyRookieToBronzePromotion();
 }
 
 function recalculateAllDriverStats() {
@@ -161,6 +181,7 @@ function recalculateAllDriverStats() {
     for (const { id } of rows) {
         updateDriverStats(id);
     }
+    applyRookieToBronzePromotion();
 }
 
 function importRaceResult(
@@ -223,19 +244,36 @@ app.get('/api/settings', (_req: Request, res: Response) => {
     const row = db.prepare("SELECT value FROM app_settings WHERE key = 'use_points'").get() as
         | { value: string }
         | undefined;
-    res.json({ usePoints: row?.value === '1', positionPointsMap: readPositionPointsMap() });
+    res.json({ usePoints: row?.value === '1', positionPointsMap: readPositionPointsMap(), autoRookieBronze: readAutoRookieBronzeEnabled() });
 });
 
 app.patch('/api/admin/settings', requireAdmin, (req: Request, res: Response) => {
-    const { usePoints } = req.body as { usePoints?: unknown };
-    if (typeof usePoints !== 'boolean') {
-        res.status(400).json({ error: 'usePoints must be a boolean' });
+    const { usePoints, autoRookieBronze } = req.body as { usePoints?: unknown; autoRookieBronze?: unknown };
+    if (typeof usePoints !== 'boolean' && typeof autoRookieBronze !== 'boolean') {
+        res.status(400).json({ error: 'usePoints or autoRookieBronze must be a boolean' });
         return;
     }
-    db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('use_points', ?)").run(
-        usePoints ? '1' : '0'
-    );
-    res.json({ usePoints });
+    const tx = db.transaction(() => {
+        if (typeof usePoints === 'boolean') {
+            db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('use_points', ?)").run(
+                usePoints ? '1' : '0'
+            );
+        }
+        let promotedCount: number | undefined;
+        if (typeof autoRookieBronze === 'boolean') {
+            const wasEnabled = readAutoRookieBronzeEnabled();
+            db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('auto_rookie_bronze', ?)").run(
+                autoRookieBronze ? '1' : '0'
+            );
+            if (autoRookieBronze && !wasEnabled) {
+                promotedCount = applyRookieToBronzePromotion();
+            }
+        }
+        return { usePoints, autoRookieBronze, promotedCount };
+    });
+
+    const result = tx();
+    res.json(result);
 });
 
 app.patch('/api/admin/position-points', requireAdmin, (req: Request, res: Response) => {
@@ -459,6 +497,132 @@ app.get('/api/races/:id/results', (req: Request, res: Response) => {
         ORDER BY rr.position ASC
     `).all(id);
     res.json(rows);
+});
+
+app.delete('/api/admin/races/:id', requireAdmin, (req: Request, res: Response) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id < 1) {
+        res.status(400).json({ error: 'Invalid id' });
+        return;
+    }
+
+    const tx = db.transaction(() => {
+        const existing = db.prepare('SELECT id, race_name FROM races WHERE id = ?').get(id) as
+            | { id: number; race_name: string }
+            | undefined;
+        if (!existing) return null;
+
+        const resultCountRow = db.prepare(
+            'SELECT COUNT(*) as total FROM race_results WHERE race_id = ?'
+        ).get(id) as { total: number };
+        const driverRows = db.prepare(
+            'SELECT DISTINCT driver_id FROM race_results WHERE race_id = ?'
+        ).all(id) as { driver_id: number }[];
+
+        db.prepare('DELETE FROM race_results WHERE race_id = ?').run(id);
+        db.prepare(
+            "UPDATE race_calendar SET linked_race_id = NULL, updated_at = datetime('now') WHERE linked_race_id = ?"
+        ).run(id);
+        db.prepare('DELETE FROM races WHERE id = ?').run(id);
+
+        for (const { driver_id } of driverRows) {
+            updateDriverStats(driver_id);
+        }
+
+        return {
+            raceName: existing.race_name,
+            resultCount: resultCountRow.total,
+        };
+    });
+
+    try {
+        const out = tx();
+        if (!out) {
+            res.status(404).json({ error: '比赛不存在' });
+            return;
+        }
+        res.json({ ok: true, ...out });
+    } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        res.status(500).json({ error: msg });
+    }
+});
+
+// ── Race update ───────────────────────────────────────────────────────────────
+
+app.patch('/api/admin/races/:id', requireAdmin, (req: Request, res: Response) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id < 1) {
+        res.status(400).json({ error: 'Invalid id' });
+        return;
+    }
+
+    const body = req.body as {
+        raceName?: unknown;
+        trackName?: unknown;
+        serverName?: unknown;
+        raceDate?: unknown;
+        sessionType?: unknown;
+        results?: unknown;
+    };
+
+    const raceName = typeof body.raceName === 'string' ? body.raceName : '';
+    const trackName = typeof body.trackName === 'string' ? body.trackName : '';
+    const serverName = typeof body.serverName === 'string' ? body.serverName : '';
+    const raceDate = typeof body.raceDate === 'string' ? body.raceDate : '';
+    const sessionType = typeof body.sessionType === 'string' ? body.sessionType : 'R';
+    const results = Array.isArray(body.results) ? body.results : [];
+
+    const tx = db.transaction(() => {
+        const existing = db.prepare('SELECT id FROM races WHERE id = ?').get(id);
+        if (!existing) return null;
+
+        db.prepare(
+            `UPDATE races
+                SET race_name = ?, track_name = ?, server_name = ?,
+                    race_date = ?, session_type = ?
+              WHERE id = ?`
+        ).run(raceName, trackName, serverName, raceDate, sessionType, id);
+
+        db.prepare('DELETE FROM race_results WHERE race_id = ?').run(id);
+
+        let resultCount = 0;
+        for (const r of results) {
+            const row = r as Partial<ImportResultRow>;
+            const steamId = typeof row.steamId === 'string' ? row.steamId : '';
+            if (!steamId) continue;
+
+            const driverName = typeof row.driverName === 'string' ? row.driverName : 'Unknown';
+            const { id: driverId } = upsertDriver(driverName, steamId);
+
+            importRaceResult(
+                id,
+                driverId,
+                Number(row.position) || 0,
+                Number(row.points) || 0,
+                Number(row.laps) || 0,
+                Number(row.totalTime) || 0,
+                Number(row.bestLap) || 0,
+                typeof row.rawData === 'string' ? row.rawData : '{}'
+            );
+            resultCount++;
+        }
+
+        recalculateAllDriverStats();
+        return { raceId: id, resultCount };
+    });
+
+    try {
+        const out = tx();
+        if (!out) {
+            res.status(404).json({ error: '比赛不存在' });
+            return;
+        }
+        res.json({ ok: true, ...out });
+    } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        res.status(500).json({ error: msg });
+    }
 });
 
 // ── Calendar ───────────────────────────────────────────────────────────────────
@@ -745,9 +909,9 @@ if (fs.existsSync(clientDist)) {
     app.use(express.static(clientDist));
 }
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
     // eslint-disable-next-line no-console
-    console.log(`Standings API listening on http://127.0.0.1:${PORT}`);
+    console.log(`Standings API listening on http://0.0.0.0:${PORT}`);
     // eslint-disable-next-line no-console
     console.log(`SQLite file: ${SQLITE_PATH}`);
     if (fs.existsSync(clientDist)) {

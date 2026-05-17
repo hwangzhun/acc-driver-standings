@@ -18,7 +18,8 @@ export type AppRoute =
 
 function parseRoute(): AppRoute {
     const raw = window.location.hash.replace(/^#/, '').replace(/^\//, '');
-    if (raw === '') return { type: 'home' };
+    if (raw === '') return { type: 'drivers' };
+    if (raw === 'sessions') return { type: 'home' };
     if (raw === 'drivers') return { type: 'drivers' };
     if (raw === 'calendar') return { type: 'calendar' };
     if (raw.startsWith('driver/')) {
@@ -120,7 +121,7 @@ const App: React.FC = () => {
     };
 
     const raceDetailBack = () => {
-        let h = '/';
+        let h = '/drivers';
         try {
             h = sessionStorage.getItem(RACE_BACK_KEY) || '/';
             sessionStorage.removeItem(RACE_BACK_KEY);
@@ -144,8 +145,8 @@ const App: React.FC = () => {
 
     const headerNav = (
         <>
-            <NavLink href="#/" label="单场成绩" active={navActive.sessions} />
-            <NavLink href="#/drivers" label="车手榜单" active={navActive.drivers} />
+            <NavLink href="#/sessions" label="单场成绩" active={navActive.sessions} />
+            <NavLink href="#/" label="车手榜单" active={navActive.drivers} />
             <NavLink href="#/calendar" label="赛历" active={navActive.calendar} />
         </>
     );
@@ -209,7 +210,7 @@ const App: React.FC = () => {
                 )}
                 {!isStandingsSection && !racesLoading && !racesError && races.length === 0 && (
                     <div className="bg-slate-800 border border-slate-700 rounded-xl p-8 text-slate-400 text-center">
-                        暂无导入的比赛，请联系管理员上传 JSON
+                        暂无导入的比赛，请联系管理员上传
                     </div>
                 )}
                 {!isStandingsSection && !racesLoading && !racesError && races.length > 0 && (
@@ -221,7 +222,7 @@ const App: React.FC = () => {
             </main>
 
             <footer className="bg-slate-950 text-slate-600 text-center p-4 text-xs border-t border-slate-900 mt-auto">
-                ACC 成绩展示站 By Hwangzhun &copy; {new Date().getFullYear()}
+                TZCC 车手榜 By Hwangzhun &copy; {new Date().getFullYear()} 粤ICP备2025468867号-1
             </footer>
         </div>
     );

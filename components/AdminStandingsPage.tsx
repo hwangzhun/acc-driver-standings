@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import type { DriverStanding, SortField } from '../db/standingsTypes';
 import { VALID_DRIVER_TIERS, type DriverTier } from '../db/standingsTypes';
 import DriverTierBadge from './DriverTierBadge';
+import RaceEditModal from './RaceEditModal';
 import { getDrivers, adminImportRace, postDriverLicenseChange, patchDriverTier, getAppSettings, updateAppSettings, updatePositionPointsMap } from '../services/standingsApi';
 import {
     parseJsonToResults, type AccSchema2, type ParsedDriverResult,
@@ -43,11 +44,13 @@ interface Props {
     onOpenDriver: (id: number) => void;
     usePoints: boolean;
     onUsePointsChange: (v: boolean) => void;
+    autoRookieBronze: boolean;
+    onAutoRookieBronzeChange: (v: boolean) => void;
     positionPointsMap: Record<number, number>;
     onPositionPointsMapChange: (map: Record<number, number>) => void;
 }
 
-const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver, usePoints: externalUsePoints, onUsePointsChange, positionPointsMap, onPositionPointsMapChange }) => {
+const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver, usePoints: externalUsePoints, onUsePointsChange, autoRookieBronze: externalAutoRookieBronze, onAutoRookieBronzeChange, positionPointsMap, onPositionPointsMapChange }) => {
     // ── Driver list state ──
     const [sortField, setSortField] = useState<SortField>('points');
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
@@ -59,11 +62,17 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver, usePoints: external
 
     // ── Settings state ──
     const [usePoints, setUsePoints] = useState(externalUsePoints);
+    const [autoRookieBronze, setAutoRookieBronze] = useState(externalAutoRookieBronze);
     const [settingsSaving, setSettingsSaving] = useState(false);
+    const [promoteSuccess, setPromoteSuccess] = useState('');
 
     useEffect(() => {
         setUsePoints(externalUsePoints);
     }, [externalUsePoints]);
+
+    useEffect(() => {
+        setAutoRookieBronze(externalAutoRookieBronze);
+    }, [externalAutoRookieBronze]);
 
     const handleUsePointsToggle = async () => {
         const next = !usePoints;
@@ -74,6 +83,24 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver, usePoints: external
             onUsePointsChange(next);
         } catch {
             setUsePoints(!next);
+        } finally {
+            setSettingsSaving(false);
+        }
+    };
+
+    const handleAutoRookieBronzeToggle = async () => {
+        const next = !autoRookieBronze;
+        setAutoRookieBronze(next);
+        setSettingsSaving(true);
+        setPromoteSuccess('');
+        try {
+            const result = await updateAppSettings({ autoRookieBronze: next });
+            onAutoRookieBronzeChange(next);
+            if (result.promotedCount) {
+                setPromoteSuccess(`已升级 ${result.promotedCount} 名车手为 Bronze`);
+            }
+        } catch {
+            setAutoRookieBronze(!next);
         } finally {
             setSettingsSaving(false);
         }
@@ -490,6 +517,35 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver, usePoints: external
                         />
                     </button>
                 </div>
+                <div className="flex items-center justify-between mt-5">
+                    <div className="flex items-center gap-3">
+                        <Settings className="w-5 h-5 text-slate-400" />
+                        <div>
+                            <h3 className="text-base font-semibold text-white">Rookie 自动升 Bronze</h3>
+                            <p className="text-sm text-slate-400 mt-0.5">开启后，参赛满 10 场且当前为 Rookie 的车手将自动升级为 Bronze；开启时会对现有符合条件的车手立即生效</p>
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={handleAutoRookieBronzeToggle}
+                        disabled={settingsSaving}
+                        className={`relative inline-flex h-7 w-14 items-center rounded-full transition-colors disabled:opacity-50 ${
+                            autoRookieBronze ? 'bg-green-600' : 'bg-slate-600'
+                        }`}
+                    >
+                        <span
+                            className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                                autoRookieBronze ? 'translate-x-8' : 'translate-x-1'
+                            }`}
+                        />
+                    </button>
+                </div>
+                {promoteSuccess && (
+                    <div className="mt-3 text-sm text-green-400 flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4" />
+                        {promoteSuccess}
+                    </div>
+                )}
             </div>
             )}
 
@@ -851,230 +907,21 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver, usePoints: external
 
             {/* Import preview modal */}
             {previewOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                    <div className="absolute inset-0 bg-black/70" onClick={handleCancelPreview} />
-                    <div className="relative bg-slate-800 border border-slate-600 rounded-xl p-6 w-full max-w-5xl max-h-[90vh] overflow-y-auto shadow-2xl">
-                        {/* Header */}
-                        <div className="flex items-center justify-between mb-5">
-                            <div>
-                                <h3 className="text-lg font-bold text-white">预览导入</h3>
-                                <p className="text-sm text-slate-400 mt-0.5">{previewFileName}</p>
-                            </div>
-                            <button
-                                type="button"
-                                onClick={handleCancelPreview}
-                                className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
-                            >
-                                <X className="w-5 h-5" />
-                            </button>
-                        </div>
-
-                        {/* Meta fields */}
-                        <div className="grid grid-cols-2 gap-4 mb-6">
-                            <div>
-                                <label className="block text-xs text-slate-400 mb-1.5">比赛名称</label>
-                                <input
-                                    type="text"
-                                    value={previewMeta.raceName}
-                                    onChange={e => setPreviewMeta(m => ({ ...m, raceName: e.target.value }))}
-                                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-red-500"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-xs text-slate-400 mb-1.5">赛道</label>
-                                <input
-                                    type="text"
-                                    value={previewMeta.trackName}
-                                    onChange={e => setPreviewMeta(m => ({ ...m, trackName: e.target.value }))}
-                                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-red-500"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-xs text-slate-400 mb-1.5">服务器</label>
-                                <input
-                                    type="text"
-                                    value={previewMeta.serverName}
-                                    onChange={e => setPreviewMeta(m => ({ ...m, serverName: e.target.value }))}
-                                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-red-500"
-                                />
-                            </div>
-                            <div className="col-span-2">
-                                <label className="block text-xs text-slate-400 mb-1.5">比赛日期</label>
-                                <div className="flex items-center gap-2">
-                                    <select
-                                        value={previewMeta.raceYear}
-                                        onChange={e => setPreviewMeta(m => ({ ...m, raceYear: e.target.value }))}
-                                        className="w-28 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-red-500 cursor-pointer"
-                                    >
-                                        <option value="">年</option>
-                                        {[2024, 2025, 2026, 2027, 2028].map(y => <option key={y} value={y}>{y}</option>)}
-                                    </select>
-                                    <span className="text-slate-500">-</span>
-                                    <select
-                                        value={previewMeta.raceMonth}
-                                        onChange={e => setPreviewMeta(m => ({ ...m, raceMonth: e.target.value }))}
-                                        className="w-20 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-red-500 cursor-pointer"
-                                    >
-                                        <option value="">月</option>
-                                        {Array.from({ length: 12 }, (_, i) => <option key={i + 1} value={String(i + 1)}>{i + 1}</option>)}
-                                    </select>
-                                    <span className="text-slate-500">-</span>
-                                    <select
-                                        value={previewMeta.raceDay}
-                                        onChange={e => setPreviewMeta(m => ({ ...m, raceDay: e.target.value }))}
-                                        className="w-20 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-red-500 cursor-pointer"
-                                    >
-                                        <option value="">日</option>
-                                        {Array.from({ length: 31 }, (_, i) => <option key={i + 1} value={String(i + 1)}>{i + 1}</option>)}
-                                    </select>
-                                </div>
-                            </div>
-                            <div>
-                                <label className="block text-xs text-slate-400 mb-1.5">Session 类型</label>
-                                <select
-                                    value={previewMeta.sessionType}
-                                    onChange={e => setPreviewMeta(m => ({ ...m, sessionType: e.target.value }))}
-                                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-red-500 cursor-pointer"
-                                >
-                                    <option value="R">R - 正赛</option>
-                                    <option value="Q">Q - 排位</option>
-                                    <option value="P">P - 练习</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        {/* Results table */}
-                        <div className="mb-4 flex items-center gap-3 text-sm">
-                            <span className="text-emerald-400 font-medium">
-                                将导入 {previewResults.filter(r => !r.removed).length} 条
-                            </span>
-                            <span className="text-red-400 font-medium">
-                                已移除 {previewResults.filter(r => r.removed).length} 条
-                            </span>
-                            <span className="text-slate-500">
-                                共 {previewResults.length} 条
-                            </span>
-                        </div>
-
-                        {(duplicateNames.size > 0 || duplicateSteamIds.size > 0) && (
-                            <div className="mb-4 flex items-start gap-2 px-3 py-2 rounded-lg
-                                bg-amber-950/40 border border-amber-800 text-amber-200 text-sm">
-                                <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-amber-400" />
-                                <div>
-                                    检测到
-                                    {duplicateNames.size > 0 && <> <b>{duplicateNames.size}</b> 个重复车手名称</>}
-                                    {duplicateNames.size > 0 && duplicateSteamIds.size > 0 && '、'}
-                                    {duplicateSteamIds.size > 0 && <> <b>{duplicateSteamIds.size}</b> 个重复 SteamID</>}
-                                    ，请确认是否需要移除重复条目。
-                                </div>
-                            </div>
-                        )}
-
-                        <div className="bg-slate-900 border border-slate-700 rounded-lg overflow-hidden mb-6">
-                            <div className="overflow-x-auto max-h-80 overflow-y-auto">
-                                <table className="w-full min-w-[900px] text-sm">
-                                    <thead className="stick top-0 bg-slate-800 text-slate-400 text-xs uppercase">
-                                        <tr>
-                                            <th className="p-2.5 text-left w-12">#</th>
-                                            <th className="p-2.5 text-left">车手</th>
-                                            <th className="p-2.5 text-left">SteamID</th>
-                                            <th className="p-2.5 text-right">圈数</th>
-                                            <th className="p-2.5 text-right">总时间</th>
-                                            <th className="p-2.5 text-right">最快圈</th>
-                                            {usePoints && <th className="p-2.5 text-right">积分</th>}
-                                            <th className="p-2.5 text-center">操作</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-700/60">
-                                        {previewResults.map((r, idx) => {
-                                            const nameDup = !r.removed && duplicateNames.has(r.driverName?.trim() ?? '');
-                                            const sidDup = !r.removed && !!r.steamId?.trim() && duplicateSteamIds.has(r.steamId.trim());
-                                            return (
-                                            <tr
-                                                key={idx}
-                                                className={`transition-opacity ${r.removed ? 'opacity-40' : 'hover:bg-slate-700/40'} ${(nameDup || sidDup) && !r.removed ? 'bg-amber-950/30' : ''}`}
-                                            >
-                                                <td className="p-2.5 text-slate-400 font-mono text-xs">{idx + 1}</td>
-                                                <td className={`p-2.5 ${nameDup ? 'text-amber-300' : 'text-slate-100'}`}>
-                                                    {r.driverName}
-                                                    {nameDup && <AlertCircle className="w-3.5 h-3.5 inline ml-1.5 text-amber-400 align-middle" title="列表中存在重复名称" />}
-                                                </td>
-                                                <td className={`p-2.5 font-mono text-xs ${sidDup ? 'text-amber-300' : 'text-slate-400'}`}>
-                                                    {r.steamId || '-'}
-                                                    {sidDup && <AlertCircle className="w-3.5 h-3.5 inline ml-1.5 text-amber-400 align-middle" title="列表中存在重复 SteamID" />}
-                                                </td>
-                                                <td className="p-2.5 text-right text-slate-300">{r.laps}</td>
-                                                <td className="p-2.5 text-right text-slate-300">{formatMsToTime(r.totalTime)}</td>
-                                                <td className="p-2.5 text-right text-slate-300">{formatMsToLap(r.bestLap)}</td>
-                                                {usePoints ? (
-                                                    <td className="p-2.5 text-right">
-                                                        <input
-                                                            type="number"
-                                                            value={r.points}
-                                                            onChange={(e) => {
-                                                                const updated = [...previewResults];
-                                                                updated[idx] = { ...updated[idx], points: Number(e.target.value) };
-                                                                setPreviewResults(updated);
-                                                            }}
-                                                            className="w-20 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm text-amber-400 font-semibold text-right focus:outline-none focus:border-red-500"
-                                                        />
-                                                    </td>
-                                                ) : (
-                                                    <td className="p-2.5 text-right text-amber-400 font-semibold">{r.points}</td>
-                                                )}
-                                                <td className="p-2.5 text-center">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            const updated = [...previewResults];
-                                                            updated[idx] = { ...updated[idx], removed: !updated[idx].removed };
-                                                            setPreviewResults(updated);
-                                                        }}
-                                                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
-                                                            r.removed
-                                                                ? 'border-emerald-700 text-emerald-400 hover:bg-emerald-950/40'
-                                                                : 'border-red-700 text-red-400 hover:bg-red-950/40'
-                                                        }`}
-                                                    >
-                                                        <Trash2 className="w-3.5 h-3.5" />
-                                                        {r.removed ? '恢复' : '移除'}
-                                                    </button>
-                                                </td>
-                                            </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-
-                        {previewError && (
-                            <div className="flex items-center gap-2 text-sm text-red-400 mb-4">
-                                <AlertCircle className="w-4 h-4" />
-                                {previewError}
-                            </div>
-                        )}
-
-                        {/* Footer */}
-                        <div className="flex gap-3">
-                            <button
-                                type="button"
-                                onClick={handleCancelPreview}
-                                className="flex-1 px-4 py-2.5 rounded-lg bg-slate-700 border border-slate-600 text-slate-200 text-sm font-medium hover:bg-slate-600 transition-colors"
-                            >
-                                取消
-                            </button>
-                            <button
-                                type="button"
-                                onClick={handleConfirmImport}
-                                disabled={importLoading || previewResults.filter(r => !r.removed).length === 0}
-                                className="flex-1 px-4 py-2.5 rounded-lg bg-green-700 hover:bg-green-600 text-white text-sm font-semibold transition-colors disabled:opacity-50"
-                            >
-                                {importLoading ? '导入中...' : '确认导入'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                <RaceEditModal
+                    open={previewOpen}
+                    mode="import"
+                    title="预览导入"
+                    subtitle={previewFileName}
+                    meta={previewMeta}
+                    results={previewResults}
+                    usePoints={usePoints}
+                    loading={importLoading}
+                    error={previewError}
+                    onMetaChange={setPreviewMeta}
+                    onResultsChange={setPreviewResults}
+                    onConfirm={handleConfirmImport}
+                    onClose={handleCancelPreview}
+                />
             )}
         </div>
     );
