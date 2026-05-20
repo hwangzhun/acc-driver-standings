@@ -12,7 +12,7 @@ const ResultList: React.FC<ResultListProps> = ({ items, onOpenResult }) => {
   if (items.length === 0) {
     return (
       <div className="bg-slate-800 border border-slate-700 rounded-xl p-8 text-center text-slate-400">
-        暂无成绩数据，请检查索引文件或 COS 目录是否有可用 JSON。
+        暂无导入的比赛，请联系管理员上传。
       </div>
     );
   }

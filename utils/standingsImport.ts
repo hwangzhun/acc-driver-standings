@@ -23,6 +23,7 @@
  */
 
 import type { ImportResult } from '../db/standingsTypes';
+import { stabilityCoeff, finishCoeff, computeRaceRankScore, isRankEligible } from './rankScore';
 
 /** Position-to-points mapping. Edit this map to adjust scoring. */
 export const POSITION_POINTS_MAP: Record<number, number> = {
@@ -76,21 +77,49 @@ export interface AccSchema2 {
             splits?: number[];
         }>;
     }>;
-    penalties?: Array<{
-        carId: number;
-        driverIndex?: number;
-        reason?: string;
-        penalty?: string;
-        penaltyValue?: number;
-        violationInLap?: number;
-        clearedInLap?: number;
-    }>;
-    manual?: Array<{
-        carId: number;
-        type?: string;
-        valueMs?: number;
-        reason?: string;
-    }>;
+    /** 扁平数组（旧格式）或 { system, manual } 对象（schema 2.0 导出） */
+    penalties?:
+        | Array<Schema2PenaltyEntry>
+        | {
+              system?: Schema2PenaltyEntry[];
+              manual?: Schema2ManualEntry[];
+          };
+    /** 顶层 manual（可与 penalties.manual 并存） */
+    manual?: Schema2ManualEntry[];
+}
+
+export type Schema2PenaltyEntry = {
+    carId: number;
+    driverIndex?: number;
+    reason?: string;
+    penalty?: string;
+    penaltyValue?: number;
+    violationInLap?: number;
+    clearedInLap?: number;
+};
+
+export type Schema2ManualEntry = {
+    carId: number;
+    type?: string;
+    valueMs?: number;
+    reason?: string;
+};
+
+/** schema 2.0 导出中 penalties 可能是数组，也可能是 { system, manual } */
+export function normalizeSchema2Penalties(data: AccSchema2): {
+    system: Schema2PenaltyEntry[];
+    manual: Schema2ManualEntry[];
+} {
+    const topManual = Array.isArray(data.manual) ? data.manual : [];
+    const penalties = data.penalties;
+    if (penalties && typeof penalties === 'object' && !Array.isArray(penalties)) {
+        const nested = penalties as { system?: Schema2PenaltyEntry[]; manual?: Schema2ManualEntry[] };
+        const system = Array.isArray(nested.system) ? nested.system : [];
+        const manual = Array.isArray(nested.manual) ? [...nested.manual, ...topManual] : [...topManual];
+        return { system, manual };
+    }
+    const system = Array.isArray(penalties) ? penalties : [];
+    return { system, manual: topManual };
 }
 
 /** Build a carId -> playerId map from lapsByCar section */
@@ -135,14 +164,31 @@ export interface ParsedDriverResult {
     totalTime: number;
     bestLap: number;
     rawData: string;
+    /** Single-race Rank score (0 if non-race session) */
+    rankScore: number;
+    /** Fraction of valid-for-best laps, 0..1 */
+    validLapRate: number;
 }
 
 export interface EditableDriverResult extends ParsedDriverResult {
     removed?: boolean;
 }
 
+export interface DbResultRow {
+    driver_name: string;
+    steam_id: string;
+    position: number;
+    points: number;
+    laps: number;
+    total_time: number;
+    best_lap: number;
+    raw_data: string;
+    rank_score?: number;
+    valid_lap_rate?: number;
+}
+
 export function dbResultsToParsed(
-    rows: Array<{ driver_name: string; steam_id: string; position: number; points: number; laps: number; total_time: number; best_lap: number; raw_data: string }>
+    rows: DbResultRow[]
 ): EditableDriverResult[] {
     return rows.map(row => ({
         driverName: row.driver_name,
@@ -154,7 +200,42 @@ export function dbResultsToParsed(
         bestLap: row.best_lap,
         rawData: row.raw_data,
         removed: false,
+        rankScore: row.rank_score ?? 0,
+        validLapRate: row.valid_lap_rate ?? 0,
     }));
+}
+
+/**
+ * 给定完整的结果列表（含 removed 标记），按当前有效条目重新计算 gridSize / winnerLaps，
+ * 然后重算所有人的 rankScore。
+ * - removed = true 或 laps <= 0 → rankScore = 0
+ * - 非正赛 → rankScore = 0
+ * - 其余按 computeRaceRankScore 计算（gridSize/winnerLaps 只统计 active 条目）
+ */
+export function recomputeParsedResultsRanks(
+    results: EditableDriverResult[],
+    sessionType: string
+): EditableDriverResult[] {
+    const active = results.filter(r => !r.removed && isRankEligible(r.laps));
+    const gridSize = active.length;
+    const winnerLaps = active.reduce((max, r) => Math.max(max, r.laps), 0);
+
+    return results.map(r => {
+        if (r.removed || !isRankEligible(r.laps)) {
+            return { ...r, rankScore: 0 };
+        }
+        if (sessionType !== 'R') {
+            return { ...r, rankScore: 0 };
+        }
+        const rankScore = computeRaceRankScore({
+            gridSize,
+            position: r.position,
+            driverLaps: r.laps,
+            winnerLaps,
+            validLapRate: r.validLapRate,
+        });
+        return { ...r, rankScore };
+    });
 }
 
 export function parseJsonToResults(data: AccSchema2, positionPointsMap?: Record<number, number>): {
@@ -168,13 +249,46 @@ export function parseJsonToResults(data: AccSchema2, positionPointsMap?: Record<
 } {
     const carIdToSteam = buildCarIdToSteamIdMap(data);
 
-    const results: ParsedDriverResult[] = (data.finalRanking ?? []).map((item) => {
+    // Build carId → { totalLaps, validLaps }
+    const carLapStats = new Map<number, { total: number; valid: number }>();
+    if (data.lapsByCar) {
+        for (const car of data.lapsByCar) {
+            const laps = car.laps ?? [];
+            const valid = laps.filter((l) => l.isValidForBest).length;
+            carLapStats.set(car.carId, { total: laps.length, valid });
+        }
+    }
+
+    const finalRanking = data.finalRanking ?? [];
+    // gridSize / winnerLaps 只统计有实际圈数的车手（与 isRankEligible 逻辑一致）
+    const rankedEntries = finalRanking.filter(item => (item.lapCount ?? 0) > 0);
+    const winnerLaps = rankedEntries.reduce((max, item) => Math.max(max, item.lapCount ?? 0), 0);
+    const gridSize = rankedEntries.length;
+
+    const results: ParsedDriverResult[] = finalRanking.map((item) => {
         const steamId = carIdToSteam.get(item.carId) ?? '';
         const pos = item.position ?? 99;
         const laps = item.lapCount ?? 0;
         const totalTime = item.officialTime ?? 0;
         const bestLap = item.bestLap ?? 0;
         const rawData = JSON.stringify(item);
+
+        const lapStats = carLapStats.get(item.carId) ?? { total: laps, valid: 0 };
+        // If no laps tracked, fall back to lapCount fields
+        const totalLaps = lapStats.total > 0 ? lapStats.total : laps;
+        const validLaps = lapStats.valid > 0 ? lapStats.valid : 0;
+        const validLapRate = totalLaps > 0 ? validLaps / totalLaps : 0;
+
+        let rankScore = 0;
+        if (data.session?.sessionType === 'R') {
+            rankScore = computeRaceRankScore({
+                gridSize,
+                position: pos,
+                driverLaps: laps,
+                winnerLaps,
+                validLapRate,
+            });
+        }
 
         return {
             driverName: item.driverName ?? 'Unknown',
@@ -185,6 +299,8 @@ export function parseJsonToResults(data: AccSchema2, positionPointsMap?: Record<
             totalTime,
             bestLap,
             rawData,
+            rankScore,
+            validLapRate,
         };
     });
 

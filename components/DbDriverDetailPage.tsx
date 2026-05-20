@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import type { DriverRow, DriverRaceHistory, LicensePointLog, DriverTier } from '../db/standingsTypes';
 import { getDriverById, getDriverRaceHistory, getLicensePointLogs, patchDriverTier } from '../services/standingsApi';
-import { ArrowLeft, Calendar, MapPin, Trophy, Star, Target } from 'lucide-react';
+import { ArrowLeft, Calendar, MapPin, Trophy, Star, Target, Crown } from 'lucide-react';
 import DriverTierBadge from './DriverTierBadge';
 import { trackDisplay } from '../constants/tracks';
 
@@ -12,6 +12,7 @@ const STAT_CARDS = [
     { key: 'podium_count', label: '领奖台', icon: Trophy, color: 'text-purple-400' },
     { key: 'top10_count', label: '前10', icon: Target, color: 'text-cyan-400' },
     { key: 'ptw_count', label: 'PTW', icon: Star, color: 'text-red-400' },
+    { key: 'rank_score', label: '总 Rank', icon: Crown, color: 'text-yellow-400' },
 ];
 
 interface Props {
@@ -141,7 +142,22 @@ const DbDriverDetailPage: React.FC<Props> = ({ driverId, showSteamId, usePoints,
                     </div>
                     <div className="flex flex-wrap gap-3">
                         {STAT_CARDS.filter(c => c.key !== 'points' || usePoints).map(({ key, label, icon: Icon, color }) => {
-                            const val = (driver as Record<string, number>)[key] as number;
+                            const raw = (driver as Record<string, unknown>)[key];
+                            if (key === 'rank_score') {
+                                const val = raw as number | null;
+                                return (
+                                    <div key={key} className="bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 min-w-[100px]">
+                                        <div className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
+                                            <Icon className={`w-3.5 h-3.5 ${color}`} />
+                                            {label}
+                                        </div>
+                                        <div className={`text-xl font-bold ${color}`}>
+                                            {val !== null && val !== undefined ? val.toFixed(1) : '—'}
+                                        </div>
+                                    </div>
+                                );
+                            }
+                            const val = raw as number;
                             return (
                                 <div key={key} className="bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 min-w-[100px]">
                                     <div className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
@@ -176,12 +192,13 @@ const DbDriverDetailPage: React.FC<Props> = ({ driverId, showSteamId, usePoints,
                                 <th className="p-3 text-center">领奖台</th>
                                 <th className="p-3 text-center">前10</th>
                                 <th className="p-3 text-center">PTW</th>
+                                <th className="p-3 text-right">Rank</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-700/60">
                                 {history.length === 0 ? (
                                 <tr>
-                                    <td colSpan={usePoints ? 11 : 10} className="p-8 text-center text-slate-400">
+                                    <td colSpan={usePoints ? 12 : 11} className="p-8 text-center text-slate-400">
                                         暂无参赛记录
                                     </td>
                                 </tr>
@@ -212,6 +229,9 @@ const DbDriverDetailPage: React.FC<Props> = ({ driverId, showSteamId, usePoints,
                                         </td>
                                         <td className="p-3 text-center">
                                             {r.is_ptw ? <span className="text-red-400">Y</span> : <span className="text-slate-600">-</span>}
+                                        </td>
+                                        <td className="p-3 text-right text-yellow-400 font-semibold">
+                                            {r.rank_score > 0 ? r.rank_score.toFixed(2) : '—'}
                                         </td>
                                     </tr>
                                 ))

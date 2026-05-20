@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS drivers (
     ptw_count INTEGER DEFAULT 0,
     top10_count INTEGER DEFAULT 0,
     tier TEXT NOT NULL DEFAULT 'Rookie',
+    rank_score REAL,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
 );
@@ -38,6 +39,8 @@ CREATE TABLE IF NOT EXISTS race_results (
     is_podium INTEGER DEFAULT 0,
     is_top10 INTEGER DEFAULT 0,
     is_ptw INTEGER DEFAULT 0,
+    rank_score REAL DEFAULT 0,
+    valid_lap_rate REAL DEFAULT 0,
     raw_data TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (race_id) REFERENCES races(id),

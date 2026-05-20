@@ -98,7 +98,6 @@ const App: React.FC = () => {
                     track: row.track_name || '',
                     sessionType: sessionTypeLabelCn(row.session_type),
                     date: (row.race_date || '').slice(0, 10),
-                    csvPath: '',
                 }));
                 setRaces(items);
             } catch (err) {

@@ -33,6 +33,7 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/server ./server
 COPY --from=builder /app/db ./db
+COPY --from=builder /app/utils ./utils
 COPY --from=builder /app/node_modules ./node_modules
 
 # tsx is listed in devDependencies; install it for production use inside the container

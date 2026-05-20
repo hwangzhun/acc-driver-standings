@@ -1,7 +1,7 @@
 import React, { useMemo, useRef } from 'react';
 import { X, AlertCircle, Trash2, Upload } from 'lucide-react';
 import type { AccSchema2, ParsedDriverResult, EditableDriverResult } from '../utils/standingsImport';
-import { parseJsonToResults } from '../utils/standingsImport';
+import { parseJsonToResults, recomputeParsedResultsRanks } from '../utils/standingsImport';
 
 interface PreviewMeta {
     raceName: string;
@@ -29,7 +29,6 @@ interface Props {
     onResultsChange: (results: ResultItem[]) => void;
     onConfirm: () => void;
     onClose: () => void;
-    onJsonReplaced?: (rawText: string) => void;
 }
 
 function formatMsToTime(ms: number): string {
@@ -55,7 +54,6 @@ const RaceEditModal: React.FC<Props> = ({
     open, mode, title, subtitle, meta, results, usePoints,
     loading, error,
     onMetaChange, onResultsChange, onConfirm, onClose,
-    onJsonReplaced,
 }) => {
     const jsonInputRef = useRef<HTMLInputElement>(null);
 
@@ -77,11 +75,10 @@ const RaceEditModal: React.FC<Props> = ({
 
     const handleJsonFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
-        if (!file || !onJsonReplaced) return;
-        const text = await file.text();
+        if (!file) return;
         let data: AccSchema2;
         try {
-            data = JSON.parse(text) as AccSchema2;
+            data = JSON.parse(await file.text()) as AccSchema2;
         } catch {
             return;
         }
@@ -97,8 +94,8 @@ const RaceEditModal: React.FC<Props> = ({
             raceDay: String(Number(d) || ''),
             sessionType: parsed.sessionType,
         });
-        onResultsChange(parsed.results.map((r: ParsedDriverResult) => ({ ...r, removed: false })));
-        onJsonReplaced(text);
+        const withRemoved = parsed.results.map((r: ParsedDriverResult) => ({ ...r, removed: (r.laps ?? 0) === 0 }));
+        onResultsChange(recomputeParsedResultsRanks(withRemoved, parsed.sessionType));
         if (jsonInputRef.current) jsonInputRef.current.value = '';
     };
 
@@ -195,7 +192,7 @@ const RaceEditModal: React.FC<Props> = ({
                             <option value="P">P - 练习</option>
                         </select>
                     </div>
-                    {mode === 'edit' && onJsonReplaced && (
+                    {mode === 'edit' && (
                         <div className="col-span-2">
                             <label className="block text-xs text-slate-400 mb-1.5">替换 JSON 文件</label>
                             <div className="flex items-center gap-3">
@@ -210,7 +207,7 @@ const RaceEditModal: React.FC<Props> = ({
                                         className="hidden"
                                     />
                                 </label>
-                                <span className="text-xs text-slate-500">重新解析将替换所有成绩数据与快照</span>
+                                <span className="text-xs text-slate-500">重新解析将替换当前编辑中的成绩数据</span>
                             </div>
                         </div>
                     )}
@@ -221,6 +218,7 @@ const RaceEditModal: React.FC<Props> = ({
                     <span className="text-emerald-400 font-medium">
                         {mode === 'import' ? '将导入' : '有效'} {results.filter(r => !r.removed).length} 条
                     </span>
+                    <span className="text-slate-500 text-xs">(计入积分与 Rank)</span>
                     <span className="text-red-400 font-medium">
                         已移除 {results.filter(r => r.removed).length} 条
                     </span>
@@ -254,6 +252,7 @@ const RaceEditModal: React.FC<Props> = ({
                                     <th className="p-2.5 text-right">圈数</th>
                                     <th className="p-2.5 text-right">总时间</th>
                                     <th className="p-2.5 text-right">最快圈</th>
+                                    <th className="p-2.5 text-right">Rank</th>
                                     {usePoints && <th className="p-2.5 text-right">积分</th>}
                                     <th className="p-2.5 text-center">操作</th>
                                 </tr>
@@ -279,6 +278,9 @@ const RaceEditModal: React.FC<Props> = ({
                                         <td className="p-2.5 text-right text-slate-300">{r.laps}</td>
                                         <td className="p-2.5 text-right text-slate-300">{formatMsToTime(r.totalTime)}</td>
                                         <td className="p-2.5 text-right text-slate-300">{formatMsToLap(r.bestLap)}</td>
+                                        <td className="p-2.5 text-right text-yellow-400 font-semibold font-mono text-xs">
+                                            {r.rankScore > 0 ? r.rankScore.toFixed(2) : '—'}
+                                        </td>
                                         {usePoints ? (
                                             <td className="p-2.5 text-right">
                                                 <input
@@ -301,7 +303,7 @@ const RaceEditModal: React.FC<Props> = ({
                                                 onClick={() => {
                                                     const updated = [...results];
                                                     updated[idx] = { ...updated[idx], removed: !updated[idx].removed };
-                                                    onResultsChange(updated);
+                                                    onResultsChange(recomputeParsedResultsRanks(updated, meta.sessionType));
                                                 }}
                                                 className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
                                                     r.removed

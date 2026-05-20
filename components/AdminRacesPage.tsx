@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Trash2, Pencil, AlertCircle, CheckCircle2 } from 'lucide-react';
 import type { RaceRow } from '../db/standingsTypes';
 import { getRaces, adminDeleteRace, adminUpdateRace, getRaceById, getRaceResultsWithDrivers, getAppSettings } from '../services/standingsApi';
-import { deleteRaceSessionSnapshot, putRaceSessionSnapshot } from '../services/raceSessionSnapshot';
 import RaceEditModal from './RaceEditModal';
 import { dbResultsToParsed, type EditableDriverResult } from '../utils/standingsImport';
 
@@ -41,7 +40,6 @@ const AdminRacesPage: React.FC<Props> = ({ onOpenRace }) => {
         raceYear: '', raceMonth: '', raceDay: '', sessionType: 'R',
     });
     const [editingResults, setEditingResults] = useState<EditableDriverResult[]>([]);
-    const [editingRawText, setEditingRawText] = useState('');
     const [editingLoading, setEditingLoading] = useState(false);
     const [editingError, setEditingError] = useState<string | null>(null);
     const [usePoints, setUsePoints] = useState(false);
@@ -74,11 +72,6 @@ const AdminRacesPage: React.FC<Props> = ({ onOpenRace }) => {
         setFeedback(null);
         try {
             const result = await adminDeleteRace(race.id);
-            try {
-                await deleteRaceSessionSnapshot(race.id);
-            } catch {
-                /* ignore */
-            }
             setRaces((prev) => prev.filter((r) => r.id !== race.id));
             setFeedback({
                 type: 'success',
@@ -115,7 +108,6 @@ const AdminRacesPage: React.FC<Props> = ({ onOpenRace }) => {
                 sessionType: raceRow.session_type || 'R',
             });
             setEditingResults(dbResultsToParsed(results));
-            setEditingRawText('');
             setEditingError(null);
             setEditingLoading(false);
             setEditingRaceId(race.id);
@@ -156,14 +148,6 @@ const AdminRacesPage: React.FC<Props> = ({ onOpenRace }) => {
 
             await adminUpdateRace(editingRaceId, body);
 
-            if (editingRawText) {
-                try {
-                    await putRaceSessionSnapshot(editingRaceId, editingRawText);
-                } catch (e) {
-                    console.warn('race session snapshot update failed:', e);
-                }
-            }
-
             setEditingRaceId(null);
             void loadRaces();
             setFeedback({
@@ -180,7 +164,6 @@ const AdminRacesPage: React.FC<Props> = ({ onOpenRace }) => {
     const handleCloseEdit = () => {
         if (editingLoading) return;
         setEditingRaceId(null);
-        setEditingRawText('');
         setEditingError(null);
     };
 
@@ -312,7 +295,6 @@ const AdminRacesPage: React.FC<Props> = ({ onOpenRace }) => {
                     onResultsChange={setEditingResults}
                     onConfirm={handleConfirmEdit}
                     onClose={handleCloseEdit}
-                    onJsonReplaced={(rawText: string) => setEditingRawText(rawText)}
                 />
             )}
         </div>

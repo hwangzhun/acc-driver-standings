@@ -11,7 +11,7 @@ export default defineConfig(({ mode }) => ({
   // 使用标准 public 目录，索引与 CSV 等静态文件从这里发布
   publicDir: 'public',
   server: {
-    port: 3000,
+    port: 3001,
     host: '0.0.0.0',
     proxy: {
       '/api': {
@@ -21,7 +21,7 @@ export default defineConfig(({ mode }) => ({
     },
   },
   preview: {
-    port: 3000,
+    port: 3001,
     host: '0.0.0.0',
     proxy: {
       '/api': {

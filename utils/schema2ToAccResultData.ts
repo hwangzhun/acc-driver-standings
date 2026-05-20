@@ -1,5 +1,10 @@
 import type { AccResultData, Lap, LeaderboardLine, Penalty } from '../types';
 import type { AccSchema2 } from './standingsImport';
+import { normalizeSchema2Penalties } from './standingsImport';
+
+function ensureArray<T>(value: T[] | null | undefined): T[] {
+    return Array.isArray(value) ? value : [];
+}
 
 /** 与原生 ACC JSON（含 sessionResult.leaderBoardLines）区分 */
 export function isSchema2Payload(obj: unknown): obj is AccSchema2 {
@@ -23,12 +28,13 @@ function splitDriverName(name: string): { firstName: string; lastName: string } 
 const INVALID_RACE_MS = 2147483647;
 
 /**
- * 将 schema 2.0 分析导出 JSON 转为 AccResultData，供 Leaderboard / DriverDetail 使用。
+ * 将 schema 2.0 分析导出 JSON 转为 AccResultData（导入解析等内部使用）。
  * 字段映射见 standingsImport.ts 注释；此处补齐 timing、laps、penalties。
  */
 export function schema2ToAccResultData(data: AccSchema2): AccResultData {
     const session = data.session ?? { sessionType: 'R', trackName: '', serverName: '' };
-    const lapsByCar = data.lapsByCar ?? [];
+    const lapsByCar = ensureArray(data.lapsByCar);
+    const { system: systemPenalties, manual: manualPenalties } = normalizeSchema2Penalties(data);
     const carMeta = new Map<
         number,
         { raceNumber: number; carModel: number; carName: string; carClass: string }
@@ -98,6 +104,7 @@ export function schema2ToAccResultData(data: AccSchema2): AccResultData {
             },
             missingMandatoryPitstop: -1,
             driverTotalTimes: [],
+            finishPosition: item.position > 0 ? item.position : undefined,
         };
     });
 
@@ -130,7 +137,7 @@ export function schema2ToAccResultData(data: AccSchema2): AccResultData {
         }
     }
 
-    for (const p of data.penalties ?? []) {
+    for (const p of systemPenalties) {
         penalties.push({
             carId: p.carId,
             driverIndex: p.driverIndex ?? 0,
@@ -142,7 +149,7 @@ export function schema2ToAccResultData(data: AccSchema2): AccResultData {
         });
     }
 
-    for (const m of data.manual ?? []) {
+    for (const m of manualPenalties) {
         if (m.type === 'Disqualified') {
             penalties.push({
                 carId: m.carId,

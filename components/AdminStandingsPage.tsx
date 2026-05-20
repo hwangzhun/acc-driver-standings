@@ -3,14 +3,14 @@ import type { DriverStanding, SortField } from '../db/standingsTypes';
 import { VALID_DRIVER_TIERS, type DriverTier } from '../db/standingsTypes';
 import DriverTierBadge from './DriverTierBadge';
 import RaceEditModal from './RaceEditModal';
-import { getDrivers, adminImportRace, postDriverLicenseChange, patchDriverTier, getAppSettings, updateAppSettings, updatePositionPointsMap } from '../services/standingsApi';
+import { getDrivers, adminImportRace, postDriverLicenseChange, patchDriverTier, getAppSettings, updateAppSettings, updatePositionPointsMap, adminRecalculateRank } from '../services/standingsApi';
 import {
     parseJsonToResults, type AccSchema2, type ParsedDriverResult,
+    recomputeParsedResultsRanks,
 } from '../utils/standingsImport';
-import { putRaceSessionSnapshot } from '../services/raceSessionSnapshot';
 import {
     Upload, Search, ChevronUp, ChevronDown, AlertCircle, CheckCircle2,
-    Plus, Minus, Trash2, X, Settings,
+    Plus, Minus, Trash2, X, Settings, RefreshCw,
 } from 'lucide-react';
 
 const SORT_OPTIONS: { value: SortField; label: string }[] = [
@@ -65,6 +65,8 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver, usePoints: external
     const [autoRookieBronze, setAutoRookieBronze] = useState(externalAutoRookieBronze);
     const [settingsSaving, setSettingsSaving] = useState(false);
     const [promoteSuccess, setPromoteSuccess] = useState('');
+    const [rankRecalcLoading, setRankRecalcLoading] = useState(false);
+    const [rankRecalcMessage, setRankRecalcMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
     useEffect(() => {
         setUsePoints(externalUsePoints);
@@ -85,6 +87,26 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver, usePoints: external
             setUsePoints(!next);
         } finally {
             setSettingsSaving(false);
+        }
+    };
+
+    const handleRecalculateRank = async () => {
+        setRankRecalcLoading(true);
+        setRankRecalcMessage(null);
+        try {
+            const { raceResultsUpdated } = await adminRecalculateRank();
+            setRankRecalcMessage({
+                type: 'success',
+                text: `已重算 ${raceResultsUpdated} 条单场 Rank，并更新所有车手总 Rank 与段位`,
+            });
+            void loadDrivers();
+        } catch (err) {
+            setRankRecalcMessage({
+                type: 'error',
+                text: err instanceof Error ? err.message : String(err),
+            });
+        } finally {
+            setRankRecalcLoading(false);
         }
     };
 
@@ -206,7 +228,6 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver, usePoints: external
     // ── Preview state ──
     const [previewOpen, setPreviewOpen] = useState(false);
     const [previewFileName, setPreviewFileName] = useState('');
-    const [previewRawText, setPreviewRawText] = useState('');
     const [previewMeta, setPreviewMeta] = useState<PreviewMeta>({
         raceName: '', trackName: '', serverName: '', raceYear: '', raceMonth: '', raceDay: '', sessionType: 'R',
     });
@@ -319,7 +340,6 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver, usePoints: external
             parsed.sourceFileName = file.name;
 
             setPreviewFileName(file.name);
-            setPreviewRawText(text);
             const datePart = parsed.raceDate.slice(0, 10);
             const [y, m, d] = datePart.split('-');
             setPreviewMeta({
@@ -331,7 +351,10 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver, usePoints: external
                 raceDay: String(Number(d) || ''),
                 sessionType: parsed.sessionType,
             });
-            setPreviewResults(parsed.results.map(r => ({ ...r, removed: r.laps === 0 })));
+            setPreviewResults(recomputeParsedResultsRanks(
+                parsed.results.map(r => ({ ...r, removed: (r.laps ?? 0) === 0 })),
+                parsed.sessionType
+            ));
             setPreviewOpen(true);
             setPreviewError(null);
         } catch (err) {
@@ -382,12 +405,6 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver, usePoints: external
 
             const { raceId, newDrivers, updatedDrivers, resultCount } = await adminImportRace(body);
 
-            try {
-                await putRaceSessionSnapshot(raceId, previewRawText);
-            } catch (e) {
-                console.warn('race session snapshot (IDB) failed:', e);
-            }
-
             void loadDrivers();
 
             setImportFeedback({
@@ -408,7 +425,6 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver, usePoints: external
     const handleCancelPreview = () => {
         setPreviewOpen(false);
         setPreviewFileName('');
-        setPreviewRawText('');
         setPreviewMeta({ raceName: '', trackName: '', serverName: '', raceYear: '', raceMonth: '', raceDay: '', sessionType: 'R' });
         setPreviewResults([]);
         setPreviewError(null);
@@ -544,6 +560,40 @@ const AdminStandingsPage: React.FC<Props> = ({ onOpenDriver, usePoints: external
                     <div className="mt-3 text-sm text-green-400 flex items-center gap-2">
                         <CheckCircle2 className="w-4 h-4" />
                         {promoteSuccess}
+                    </div>
+                )}
+                <div className="mt-5 pt-5 border-t border-slate-700 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                        <RefreshCw className="w-5 h-5 text-slate-400" />
+                        <div>
+                            <h3 className="text-base font-semibold text-white">重算 Rank 分</h3>
+                            <p className="text-sm text-slate-400 mt-0.5">
+                                按当前数据库中的名次、圈数重算所有正赛单场 Rank，并更新车手总 Rank 与段位。无有效圈率的历史记录按中性系数 1.00 处理；建议重新导入 JSON 以获得准确有效圈率。
+                            </p>
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={handleRecalculateRank}
+                        disabled={rankRecalcLoading || settingsSaving}
+                        className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium disabled:opacity-50 shrink-0"
+                    >
+                        <RefreshCw className={`w-4 h-4 ${rankRecalcLoading ? 'animate-spin' : ''}`} />
+                        {rankRecalcLoading ? '计算中…' : '重算 Rank'}
+                    </button>
+                </div>
+                {rankRecalcMessage && (
+                    <div
+                        className={`mt-3 text-sm flex items-center gap-2 ${
+                            rankRecalcMessage.type === 'success' ? 'text-green-400' : 'text-red-400'
+                        }`}
+                    >
+                        {rankRecalcMessage.type === 'success' ? (
+                            <CheckCircle2 className="w-4 h-4 shrink-0" />
+                        ) : (
+                            <AlertCircle className="w-4 h-4 shrink-0" />
+                        )}
+                        {rankRecalcMessage.text}
                     </div>
                 )}
             </div>

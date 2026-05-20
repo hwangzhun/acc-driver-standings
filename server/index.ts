@@ -6,7 +6,7 @@ import express, { type Request, type Response, type RequestHandler } from 'expre
 import crypto from 'crypto';
 import Database from 'better-sqlite3';
 import { STANDINGS_SCHEMA_SQL } from '../db/schema.js';
-
+import { computeRaceRankScore, tierFromTotalRank } from '../utils/rankScore.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const DEFAULT_SQLITE = path.join(ROOT, 'data', 'standings.sqlite');
@@ -111,6 +111,17 @@ function openDatabase(): Database {
     if (!tierCol.some((c) => c.name === 'tier')) {
         database.exec("ALTER TABLE drivers ADD COLUMN tier TEXT NOT NULL DEFAULT 'Rookie'");
     }
+    if (!tierCol.some((c) => c.name === 'rank_score')) {
+        database.exec("ALTER TABLE drivers ADD COLUMN rank_score REAL");
+    }
+
+    const rrCols = database.prepare('PRAGMA table_info(race_results)').all() as Array<{ name: string }>;
+    if (!rrCols.some((c) => c.name === 'rank_score')) {
+        database.exec("ALTER TABLE race_results ADD COLUMN rank_score REAL DEFAULT 0");
+    }
+    if (!rrCols.some((c) => c.name === 'valid_lap_rate')) {
+        database.exec("ALTER TABLE race_results ADD COLUMN valid_lap_rate REAL DEFAULT 0");
+    }
 
     const calCols = database.prepare('PRAGMA table_info(race_calendar)').all() as Array<{ name: string }>;
     const calNewCols = [
@@ -163,6 +174,31 @@ function upsertDriver(name: string, steamId: string): { id: number; isNew: boole
 }
 
 function updateDriverStats(driverId: number) {
+    // Recent 10 race sessions (only 'R') for rank score, ordered newest first
+    const recentRaces = db.prepare(`
+        SELECT rr.rank_score
+        FROM race_results rr
+        JOIN races r ON r.id = rr.race_id
+        WHERE rr.driver_id = ? AND r.session_type = 'R' AND rr.rank_score IS NOT NULL
+        ORDER BY r.race_date DESC, r.id DESC
+        LIMIT 10
+    `).all(driverId) as { rank_score: number }[];
+
+    const raceCount = db.prepare(`
+        SELECT COUNT(*) as cnt FROM race_results rr
+        JOIN races r ON r.id = rr.race_id
+        WHERE rr.driver_id = ? AND r.session_type = 'R'
+    `).get(driverId) as { cnt: number };
+
+    let rankScore: number | null = null;
+    let tier: string = 'Rookie';
+
+    if (recentRaces.length >= 10) {
+        const sum = recentRaces.reduce((a, b) => a + b.rank_score, 0);
+        rankScore = sum / 10;
+        tier = tierFromTotalRank(rankScore);
+    }
+
     db.prepare(`
         UPDATE drivers SET
             points = COALESCE((SELECT SUM(rr.points) FROM race_results rr WHERE rr.driver_id = ?), 0),
@@ -170,10 +206,11 @@ function updateDriverStats(driverId: number) {
             podium_count = COALESCE((SELECT COUNT(*) FROM race_results rr WHERE rr.driver_id = ? AND rr.is_podium = 1), 0),
             top10_count = COALESCE((SELECT COUNT(*) FROM race_results rr WHERE rr.driver_id = ? AND rr.is_top10 = 1), 0),
             ptw_count = COALESCE((SELECT COUNT(*) FROM race_results rr WHERE rr.driver_id = ? AND rr.is_ptw = 1), 0),
+            rank_score = ?,
+            tier = ?,
             updated_at = datetime('now')
         WHERE id = ?
-    `).run(driverId, driverId, driverId, driverId, driverId, driverId);
-    applyRookieToBronzePromotion();
+    `).run(driverId, driverId, driverId, driverId, driverId, rankScore, tier, driverId);
 }
 
 function recalculateAllDriverStats() {
@@ -181,7 +218,45 @@ function recalculateAllDriverStats() {
     for (const { id } of rows) {
         updateDriverStats(id);
     }
-    applyRookieToBronzePromotion();
+}
+
+/** 按名次/圈数/有效圈率重算所有正赛单场 Rank，再汇总车手总 Rank */
+function recalculateAllRaceRankScores(): number {
+    const races = db.prepare("SELECT id FROM races WHERE session_type = 'R'").all() as { id: number }[];
+    const updateStmt = db.prepare(
+        'UPDATE race_results SET rank_score = ?, valid_lap_rate = ? WHERE id = ?'
+    );
+    let updated = 0;
+
+    for (const { id: raceId } of races) {
+        const results = db
+            .prepare('SELECT id, position, laps, valid_lap_rate FROM race_results WHERE race_id = ?')
+            .all(raceId) as { id: number; position: number; laps: number; valid_lap_rate: number }[];
+
+        if (results.length === 0) continue;
+
+        const gridSize = results.length;
+        const winnerLaps = results.reduce((max, r) => Math.max(max, Number(r.laps) || 0), 0);
+
+        for (const r of results) {
+            // laps <= 0 are not eligible for rank → force to 0
+            if (Number(r.laps) <= 0) {
+                updateStmt.run(0, Number(r.valid_lap_rate), r.id);
+                continue;
+            }
+            const validLapRate = Number(r.valid_lap_rate) > 0 ? Number(r.valid_lap_rate) : 1.0;
+            const rankScore = computeRaceRankScore({
+                gridSize,
+                position: Number(r.position) || 99,
+                driverLaps: Number(r.laps) || 0,
+                winnerLaps,
+                validLapRate,
+            });
+            updateStmt.run(rankScore, validLapRate, r.id);
+            updated++;
+        }
+    }
+    return updated;
 }
 
 function importRaceResult(
@@ -192,15 +267,17 @@ function importRaceResult(
     laps: number,
     totalTime: number,
     bestLap: number,
-    rawData: string
+    rawData: string,
+    rankScore: number,
+    validLapRate: number
 ) {
     const isPodium = position >= 1 && position <= 3 ? 1 : 0;
     const isTop10 = position >= 1 && position <= 10 ? 1 : 0;
     const isPtw = position === 1 ? 1 : 0;
     db.prepare(
-        `INSERT INTO race_results (race_id, driver_id, position, points, laps, total_time, best_lap, is_podium, is_top10, is_ptw, raw_data)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(raceId, driverId, position, points, laps, totalTime, bestLap, isPodium, isTop10, isPtw, rawData);
+        `INSERT INTO race_results (race_id, driver_id, position, points, laps, total_time, best_lap, is_podium, is_top10, is_ptw, rank_score, valid_lap_rate, raw_data)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(raceId, driverId, position, points, laps, totalTime, bestLap, isPodium, isTop10, isPtw, rankScore, validLapRate, rawData);
 }
 
 const app = express();
@@ -265,8 +342,11 @@ app.patch('/api/admin/settings', requireAdmin, (req: Request, res: Response) => 
             db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('auto_rookie_bronze', ?)").run(
                 autoRookieBronze ? '1' : '0'
             );
+            // autoRookieBronze setting is preserved but no longer drives tier
+            // tier is now derived from Rank score via updateDriverStats
             if (autoRookieBronze && !wasEnabled) {
-                promotedCount = applyRookieToBronzePromotion();
+                recalculateAllDriverStats();
+                promotedCount = 0;
             }
         }
         return { usePoints, autoRookieBronze, promotedCount };
@@ -336,12 +416,12 @@ app.get('/api/drivers', (req: Request, res: Response) => {
 
     const sql = hasSearch
         ? `SELECT d.id, d.name, d.steam_id, d.points, d.license_points,
-               d.total_races, d.podium_count, d.ptw_count, d.top10_count, d.tier
+               d.total_races, d.podium_count, d.ptw_count, d.top10_count, d.tier, d.rank_score
         FROM drivers d
         WHERE d.name LIKE ? OR d.steam_id LIKE ?
         ORDER BY d.${col} ${dir}, d.name ASC`
         : `SELECT d.id, d.name, d.steam_id, d.points, d.license_points,
-               d.total_races, d.podium_count, d.ptw_count, d.top10_count, d.tier
+               d.total_races, d.podium_count, d.ptw_count, d.top10_count, d.tier, d.rank_score
         FROM drivers d
         ORDER BY d.${col} ${dir}, d.name ASC`;
 
@@ -374,7 +454,7 @@ app.get('/api/drivers/:id/history', (req: Request, res: Response) => {
     const rows = db.prepare(`
         SELECT r.id as race_id, r.race_name, r.track_name, r.race_date,
                rr.position, rr.points, rr.laps, rr.total_time, rr.best_lap,
-               rr.is_podium, rr.is_top10, rr.is_ptw
+               rr.is_podium, rr.is_top10, rr.is_ptw, rr.rank_score, rr.valid_lap_rate
         FROM race_results rr
         JOIN races r ON r.id = rr.race_id
         WHERE rr.driver_id = ?
@@ -475,7 +555,7 @@ app.get('/api/races/:id', (req: Request, res: Response) => {
         res.status(400).json({ error: 'Invalid id' });
         return;
     }
-    const row = db.prepare('SELECT * FROM races WHERE id = ?').get(id);
+    const row = db.prepare('SELECT * FROM races WHERE id = ?').get(id) as Record<string, unknown> | undefined;
     if (!row) {
         res.status(404).json({ error: 'Not found' });
         return;
@@ -603,7 +683,9 @@ app.patch('/api/admin/races/:id', requireAdmin, (req: Request, res: Response) =>
                 Number(row.laps) || 0,
                 Number(row.totalTime) || 0,
                 Number(row.bestLap) || 0,
-                typeof row.rawData === 'string' ? row.rawData : '{}'
+                typeof row.rawData === 'string' ? row.rawData : '{}',
+                Number(row.rankScore) || 0,
+                Number(row.validLapRate) || 0
             );
             resultCount++;
         }
@@ -815,6 +897,8 @@ interface ImportResultRow {
     totalTime: number;
     bestLap: number;
     rawData: string;
+    rankScore: number;
+    validLapRate: number;
 }
 
 app.post('/api/admin/import-race', requireAdmin, (req: Request, res: Response) => {
@@ -886,7 +970,9 @@ app.post('/api/admin/import-race', requireAdmin, (req: Request, res: Response) =
                 Number(row.laps) || 0,
                 Number(row.totalTime) || 0,
                 Number(row.bestLap) || 0,
-                typeof row.rawData === 'string' ? row.rawData : '{}'
+                typeof row.rawData === 'string' ? row.rawData : '{}',
+                Number(row.rankScore) || 0,
+                Number(row.validLapRate) || 0
             );
             resultCount++;
         }
@@ -898,6 +984,17 @@ app.post('/api/admin/import-race', requireAdmin, (req: Request, res: Response) =
     try {
         const out = tx();
         res.json(out);
+    } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        res.status(500).json({ error: msg });
+    }
+});
+
+app.post('/api/admin/recalculate-rank', requireAdmin, (_req: Request, res: Response) => {
+    try {
+        const raceResultsUpdated = recalculateAllRaceRankScores();
+        recalculateAllDriverStats();
+        res.json({ ok: true, raceResultsUpdated });
     } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         res.status(500).json({ error: msg });

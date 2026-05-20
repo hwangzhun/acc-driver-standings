@@ -17,6 +17,7 @@ export interface DriverRow {
     ptw_count: number;
     top10_count: number;
     tier: DriverTier;
+    rank_score: number | null;
     created_at: string;
     updated_at: string;
 }
@@ -44,6 +45,8 @@ export interface RaceResultRow {
     is_podium: number;
     is_top10: number;
     is_ptw: number;
+    rank_score: number;
+    valid_lap_rate: number;
     raw_data: string;
     created_at: string;
 }
@@ -70,6 +73,7 @@ export interface DriverStanding {
     ptw_count: number;
     top10_count: number;
     tier: DriverTier;
+    rank_score: number | null;
 }
 
 export interface DriverRaceHistory {
@@ -85,6 +89,8 @@ export interface DriverRaceHistory {
     is_podium: number;
     is_top10: number;
     is_ptw: number;
+    rank_score: number;
+    valid_lap_rate: number;
 }
 
 export interface LicensePointLog {

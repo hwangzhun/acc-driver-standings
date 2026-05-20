@@ -253,6 +253,11 @@ export async function updatePositionPointsMap(
     return parseJson(res);
 }
 
+export async function adminRecalculateRank(): Promise<{ ok: boolean; raceResultsUpdated: number }> {
+    const res = await adminFetch('/api/admin/recalculate-rank', { method: 'POST' });
+    return parseJson(res);
+}
+
 // ── Calendar API ────────────────────────────────────────────────────────────────
 
 export async function getCalendarEvents(): Promise<CalendarEventRow[]> {

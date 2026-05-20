@@ -1,10 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import type { RaceRow, RaceResultRow } from '../db/standingsTypes';
 import { getRaceById, getRaceResultsWithDrivers } from '../services/standingsApi';
-import { getRaceSessionSnapshot } from '../services/raceSessionSnapshot';
-import { parseAccResultsPayload, normalizeJsonText } from '../utils';
-import type { AccResultData } from '../types';
-import SessionResultView from './SessionResultView';
 import { ArrowLeft, Calendar, MapPin } from 'lucide-react';
 import { trackDisplay } from '../constants/tracks';
 
@@ -28,10 +24,6 @@ const DbRaceDetailPage: React.FC<Props> = ({ raceId, showSteamId, usePoints, onB
     const [race, setRace] = useState<RaceRow | null | undefined>(undefined);
     const [results, setResults] = useState<Array<RaceResultRow & { driver_name: string; steam_id: string }>>([]);
     const [dbError, setDbError] = useState<string | null>(null);
-
-    const [viewData, setViewData] = useState<AccResultData | null>(null);
-    const [snapshotLoading, setSnapshotLoading] = useState(true);
-    const [snapshotError, setSnapshotError] = useState<string | null>(null);
 
     useEffect(() => {
         let cancelled = false;
@@ -61,37 +53,6 @@ const DbRaceDetailPage: React.FC<Props> = ({ raceId, showSteamId, usePoints, onB
         };
     }, [raceId]);
 
-    useEffect(() => {
-        let cancelled = false;
-        async function load() {
-            setSnapshotLoading(true);
-            setSnapshotError(null);
-            setViewData(null);
-            try {
-                const txt = await getRaceSessionSnapshot(raceId);
-                if (cancelled) return;
-                if (!txt) {
-                    setSnapshotLoading(false);
-                    return;
-                }
-                const norm = normalizeJsonText(txt);
-                const u8 = new TextEncoder().encode(norm);
-                const data = parseAccResultsPayload(u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength));
-                if (!cancelled) setViewData(data);
-            } catch (e) {
-                if (!cancelled) {
-                    setSnapshotError(e instanceof Error ? e.message : String(e));
-                }
-            } finally {
-                if (!cancelled) setSnapshotLoading(false);
-            }
-        }
-        void load();
-        return () => {
-            cancelled = true;
-        };
-    }, [raceId]);
-
     if (race === undefined) {
         return (
             <div className="bg-slate-800 border border-slate-700 rounded-xl p-8 text-slate-300">
@@ -116,38 +77,8 @@ const DbRaceDetailPage: React.FC<Props> = ({ raceId, showSteamId, usePoints, onB
         );
     }
 
-    if (snapshotLoading) {
-        return (
-            <div className="bg-slate-800 border border-slate-700 rounded-xl p-8 text-slate-300">
-                正在加载本场完整成绩…
-            </div>
-        );
-    }
-
-    if (viewData && !snapshotError) {
-        return (
-            <SessionResultView
-                viewData={viewData}
-                onBack={onBack}
-                backButtonLabel="返回"
-                backUsesListIcon={false}
-            />
-        );
-    }
-
     return (
         <div className="space-y-4">
-            {snapshotError ? (
-                <div className="bg-amber-950/30 border border-amber-800 rounded-xl p-4 text-amber-200 text-sm">
-                    完整成绩解析失败：{snapshotError}。以下为榜单摘要。
-                </div>
-            ) : (
-                <div className="bg-slate-800/80 border border-slate-600 rounded-xl p-4 text-slate-300 text-sm">
-                    本场未保存完整成绩 JSON（例如导入时尚未启用快照，或浏览器禁止
-                    IndexedDB）。请重新在管理后台上传该场 JSON 后刷新。以下为榜单摘要。
-                </div>
-            )}
-
             <button
                 type="button"
                 onClick={onBack}
@@ -159,6 +90,7 @@ const DbRaceDetailPage: React.FC<Props> = ({ raceId, showSteamId, usePoints, onB
 
             <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
                 <h2 className="text-xl font-bold text-white">{race.race_name}</h2>
+                <p className="text-xs text-slate-500 mt-1">比赛快照</p>
                 <div className="mt-3 flex flex-wrap gap-4 text-sm text-slate-400">
                     {race.track_name && (
                         <span className="flex items-center gap-1.5">
@@ -188,12 +120,13 @@ const DbRaceDetailPage: React.FC<Props> = ({ raceId, showSteamId, usePoints, onB
                                 <th className="p-3 text-right">总用时</th>
                                 <th className="p-3 text-right">最快圈</th>
                                 {usePoints && <th className="p-3 text-right">积分</th>}
+                                <th className="p-3 text-right">Rank</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-700/60">
                             {results.length === 0 ? (
                                 <tr>
-                                    <td colSpan={showSteamId ? (usePoints ? 7 : 6) : (usePoints ? 6 : 5)} className="p-8 text-center text-slate-400">
+                                    <td colSpan={showSteamId ? (usePoints ? 8 : 7) : (usePoints ? 7 : 6)} className="p-8 text-center text-slate-400">
                                         暂无数据
                                     </td>
                                 </tr>
@@ -213,6 +146,9 @@ const DbRaceDetailPage: React.FC<Props> = ({ raceId, showSteamId, usePoints, onB
                                             {formatTime(r.best_lap)}
                                         </td>
                                         {usePoints && <td className="p-3 text-right text-amber-400 font-semibold">{r.points}</td>}
+                                        <td className="p-3 text-right text-yellow-400 font-semibold">
+                                            {r.rank_score > 0 ? r.rank_score.toFixed(2) : '—'}
+                                        </td>
                                     </tr>
                                 ))
                             )}
